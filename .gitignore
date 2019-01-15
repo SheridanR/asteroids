@@ -1,0 +1,21 @@
+# git ls-files --others --exclude-from=.gitignore
+# Lines that start with '#' are comments.
+
+~*
+*.vcxproj.user
+*.opensdf
+*.sdf
+*.suo
+log.txt
+x64/*
+Asteroids.VC.db
+build/*.iobj
+build/*.ipdb
+build/*.pdb
+build/*.ilk
+build/*.Build.CppClean.log
+build*.zip
+gmon.out
+*.vspx
+*.psess
+*.etl
