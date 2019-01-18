@@ -25,7 +25,7 @@ Game::~Game() {
 }
 
 void Game::init() {
-	rand.seedValue(0);
+	rand.seedTime();
 	spawnPlayer();
 	spawnAsteroids();
 }
@@ -333,6 +333,10 @@ void Entity::shootBullet(float speed, float range) {
 
 void Player::process() {
 	Vector front(cosf(ang), sinf(ang), 0.f);
+
+	if (vel.lengthSquared() == 0.f) {
+		moved = false;
+	}
 
 	if (game->inputs[Game::Input::IN_RIGHT]) {
 		ang += PI / mainEngine->getTicksPerSecond();

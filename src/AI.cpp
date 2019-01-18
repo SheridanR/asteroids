@@ -5,7 +5,7 @@
 #include "Engine.hpp"
 #include "Game.hpp"
 
-const int AI::BoxRadius = 100;
+const int AI::BoxRadius = 40;
 const int AI::Outputs = OUT_MAX;
 
 const int AI::Population = 300;
