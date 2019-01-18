@@ -131,6 +131,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\AI.cpp" />
     <ClCompile Include="src\Asset.cpp" />
     <ClCompile Include="src\Camera.cpp" />
     <ClCompile Include="src\Directory.cpp" />
@@ -149,6 +150,7 @@
     <ClCompile Include="src\Text.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\AI.hpp" />
     <ClInclude Include="src\ArrayList.hpp" />
     <ClInclude Include="src\Asset.hpp" />
     <ClInclude Include="src\Camera.hpp" />

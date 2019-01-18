@@ -255,6 +255,21 @@ public:
 		return result;
 	}
 
+	// hash the string
+	// @return a number representation of the string
+	unsigned long hash() const {
+		if (str == nullptr) {
+			return 0;
+		}
+		unsigned long value = 5381;
+		int c;
+		const char* data = str;
+		while((c = *data++)!=0) {
+			value = ((value << 5) + value) + c; // hash * 33 + c
+		}
+		return value;
+	}
+
 	// access char data
 	// @return the char at the given index
 	char& operator[](const size_t index) {

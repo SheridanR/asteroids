@@ -105,11 +105,6 @@ void Engine::init() {
 		}
 	}
 
-	// instantiate a timer
-	timerRunning = true;
-	timer = std::thread(&Engine::timerCallback, ticksPerSecond);
-	SDL_SetThreadPriority(SDL_THREAD_PRIORITY_HIGH);
-
 	// cache resources
 	fmsg(Engine::MSG_INFO,"game folder is '%s'",game.path.get());
 	loadAllResources();
@@ -120,8 +115,12 @@ void Engine::init() {
 
 	// start game
 	fmsg(Engine::MSG_INFO,"starting game");
-	gamestate = new Game();
-	gamestate->init(xres, yres);
+	gamestate = new Game(xres, yres);
+
+	// instantiate a timer
+	timerRunning = true;
+	timer = std::thread(&Engine::timerCallback, ticksPerSecond);
+	SDL_SetThreadPriority(SDL_THREAD_PRIORITY_HIGH);
 
 	// done
 	fmsg(Engine::MSG_INFO,"done");

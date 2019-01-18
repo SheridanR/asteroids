@@ -9,6 +9,7 @@
 #include "Random.hpp"
 
 class Game;
+class AI;
 
 class Entity {
 public:
@@ -81,6 +82,10 @@ public:
 	virtual bool onHit(const Entity* other) override;
 
 	Uint32 shootTime = 0;
+
+	bool moved = false;
+
+	bool shooting = false;
 };
 
 class Asteroid : public Entity {
@@ -167,11 +172,11 @@ public:
 
 class Game {
 public:
-	Game();
+	Game(float _boardW, float _boardH);
 	~Game();
 
 	// init
-	void init(float _boardW, float _boardH);
+	void init();
 
 	// count asteroids
 	int countAsteroids();
@@ -187,6 +192,9 @@ public:
 
 	// lets you control the game with a keyboard
 	void doKeyboardInput();
+	
+	// runs the AI and allows it to make inputs
+	void doAI();
 
 	// process a frame
 	void process();
@@ -216,11 +224,12 @@ public:
 	float boardH = 0.f;
 	float wonTimer = 0.f;
 	float lossTimer = -1.f;
-	Uint32 beat = 60;
+	Uint32 beat = 70;
 	bool previousBeat = false;
 	Uint32 score = 0;
 	Uint32 lives = 3;
+	Uint32 ticks = 0;
 	Random rand;
 
-	Uint32 ticks = 0;
+	AI* ai = nullptr;
 };

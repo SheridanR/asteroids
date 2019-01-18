@@ -4,19 +4,28 @@
 #include "Game.hpp"
 #include "Engine.hpp"
 #include "Renderer.hpp"
+#include "AI.hpp"
 
-Game::Game() {
+Game::Game(float _boardW, float _boardH) {
+	boardW = _boardW;
+	boardH = _boardH;
+	ai = new AI(this);
+	ai->init((int)boardW, (int)boardH);
+	if (!ai) {
+		init();
+	}
 }
 
 Game::~Game() {
 	term();
+	if (ai) {
+		delete ai;
+		ai = nullptr;
+	}
 }
 
-void Game::init(float _boardW, float _boardH) {
-	boardW = _boardW;
-	boardH = _boardH;
-
-	rand.seedTime();
+void Game::init() {
+	rand.seedValue(0);
 	spawnPlayer();
 	spawnAsteroids();
 }
@@ -72,6 +81,7 @@ void Game::term() {
 	lives = 3;
 	beat = 70;
 	previousBeat = false;
+	ticks = 0;
 }
 
 void Game::draw(Camera& camera) {
@@ -86,7 +96,7 @@ void Game::draw(Camera& camera) {
 		Rect<int> rect;
 		rect.x = 10; rect.y = 10;
 		rect.w = 0; rect.h = 0;
-		StringBuf<16> buf("Score: %d", score);
+		StringBuf<32> buf("Score: %d", score);
 		renderer->printText(rect, buf.get());
 	}
 
@@ -95,8 +105,47 @@ void Game::draw(Camera& camera) {
 		Rect<int> rect;
 		rect.x = 10; rect.y = 30;
 		rect.w = 0; rect.h = 0;
-		StringBuf<16> buf("Lives: %d", lives);
+		StringBuf<32> buf("Lives: %d", lives);
 		renderer->printText(rect, buf.get());
+	}
+
+	// ai stats
+	if (ai) {
+		// generation
+		{
+			Rect<int> rect;
+			rect.x = 10; rect.y = 50;
+			rect.w = 0; rect.h = 0;
+			StringBuf<32> buf("Generation: %d", ai->getGeneration());
+			renderer->printText(rect, buf.get());
+		}
+
+		// species
+		{
+			Rect<int> rect;
+			rect.x = 10; rect.y = 70;
+			rect.w = 0; rect.h = 0;
+			StringBuf<32> buf("Species: %d", ai->getSpecies());
+			renderer->printText(rect, buf.get());
+		}
+
+		// genome
+		{
+			Rect<int> rect;
+			rect.x = 10; rect.y = 90;
+			rect.w = 0; rect.h = 0;
+			StringBuf<32> buf("Genome: %d", ai->getGenome());
+			renderer->printText(rect, buf.get());
+		}
+
+		// max fitness
+		{
+			Rect<int> rect;
+			rect.x = 10; rect.y = 110;
+			rect.w = 0; rect.h = 0;
+			StringBuf<32> buf("Max fitness: %d", ai->getMaxFitness());
+			renderer->printText(rect, buf.get());
+		}
 	}
 }
 
@@ -104,11 +153,33 @@ void Game::doKeyboardInput() {
 	inputs[IN_THRUST] = mainEngine->getKeyStatus(SDL_SCANCODE_UP);
 	inputs[IN_RIGHT] = mainEngine->getKeyStatus(SDL_SCANCODE_RIGHT);
 	inputs[IN_LEFT] = mainEngine->getKeyStatus(SDL_SCANCODE_LEFT);
-	inputs[IN_SHOOT] = mainEngine->pressKey(SDL_SCANCODE_SPACE);
+	inputs[IN_SHOOT] = mainEngine->getKeyStatus(SDL_SCANCODE_SPACE);
+}
+
+void Game::doAI() {
+	if (mainEngine->pressKey(SDL_SCANCODE_F1)) {
+		ai->save();
+	}
+	if (mainEngine->pressKey(SDL_SCANCODE_F2)) {
+		ai->load();
+	}
+
+	// step AI
+	ai->process();
+
+	// apply inputs
+	inputs[IN_THRUST] = ai->outputs[AI::Output::OUT_THRUST];
+	inputs[IN_RIGHT] = ai->outputs[AI::Output::OUT_RIGHT];
+	inputs[IN_LEFT] = ai->outputs[AI::Output::OUT_LEFT];
+	inputs[IN_SHOOT] = ai->outputs[AI::Output::OUT_SHOOT];
 }
 
 void Game::process() {
-	doKeyboardInput();
+	if (ai) {
+		doAI();
+	} else {
+		doKeyboardInput();
+	}
 
 	// process entities
 	Node<Entity*>* nextnode = nullptr;
@@ -204,8 +275,8 @@ void Game::process() {
 	}
 
 	// beat
-	if (beat < 30) {
-		beat = 30;
+	if (beat < 20) {
+		beat = 20;
 	}
 	if (ticks && ticks % beat == 0) {
 		previousBeat = (previousBeat == false);
@@ -237,7 +308,7 @@ bool Entity::onHit(const Entity* other) {
 			(game->player != other || other->ticks > 120.f)) {
 			if (team == Team::TEAM_ENEMY) {
 				game->score += getPoints();
-				game->beat -= 1;
+				game->beat -= 2;
 			}
 			dead = true;
 			return true;
@@ -265,17 +336,27 @@ void Player::process() {
 
 	if (game->inputs[Game::Input::IN_RIGHT]) {
 		ang += PI / mainEngine->getTicksPerSecond();
+		moved = true;
 	}
 	if (game->inputs[Game::Input::IN_LEFT]) {
 		ang -= PI / mainEngine->getTicksPerSecond();
+		moved = true;
 	}
 	if (game->inputs[Game::Input::IN_THRUST]) {
 		vel += (front * 10.f) / mainEngine->getTicksPerSecond();
+		moved = true;
 	}
-	if (game->inputs[Game::Input::IN_SHOOT] && ticks - shootTime > 6) {
-		shootTime = ticks;
-		shootBullet(10.f, 40.f);
-		mainEngine->playSound("sounds/shoot.wav", false);
+	if (game->inputs[Game::Input::IN_SHOOT]) {
+		if (!shooting && ticks - shootTime > 6) {
+			shootTime = ticks;
+			shootBullet(10.f, 40.f);
+			mainEngine->playSound("sounds/shoot.wav", false);
+			moved = true;
+			shooting = true;
+		}
+	}
+	if (!game->inputs[Game::Input::IN_SHOOT]) {
+		shooting = false;
 	}
 	if (vel.lengthSquared() > 100.f) {
 		vel = vel.normal() * 10.f;
@@ -326,6 +407,7 @@ bool Player::onHit(const Entity* other) {
 		explosion->radius = 0.f;
 		game->addEntity(explosion);
 		mainEngine->playSound("sounds/die.wav", false);
+		game->beat -= 10;
 		return true;
 	}
 	return false;
