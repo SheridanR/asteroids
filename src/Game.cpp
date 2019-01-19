@@ -6,6 +6,62 @@
 #include "Renderer.hpp"
 #include "AI.hpp"
 
+bool intersectRayLine(const Vector& rayOrigin, const float rayAngle, const Vector& lineStart, const Vector& lineEnd, Vector& out) {
+	Vector r1 = rayOrigin;
+	r1.x += cosf(rayAngle);
+	r1.y += sinf(rayAngle);
+
+	Vector l = Vector(lineStart.x, lineStart.y, 1.f).cross(Vector(lineEnd.x, lineEnd.y, 1.f));
+	Vector m = Vector(rayOrigin.x, rayOrigin.y, 1.f).cross(Vector(r1.x, r1.y, 1.f));
+	Vector i = l.cross(m);
+
+	if (i.z == 0.f) {
+		out = rayOrigin;
+		return true;
+	} else {
+		Vector q(i.x / i.z, i.y / i.z, 0.f);
+		Vector d(lineEnd - lineStart);
+		Vector o(q - lineStart);
+		if (d.lengthSquared() < o.lengthSquared() || d.dot(o) < 0.f || (q - rayOrigin).dot(r1 - rayOrigin) < 0.f) {
+			return false;
+		} else {
+			out = q;
+			return true;
+		}
+	}
+}
+
+int intersectRayCircle(const Vector& rayOrigin, const float rayAngle, const Vector& circleOrigin, const float radius, Vector& out1, Vector& out2) {
+	Vector r1;
+	r1.x += cosf(rayAngle);
+	r1.y += sinf(rayAngle);
+
+	Vector ac = circleOrigin - rayOrigin;
+	float ac1 = ac.dot(r1);
+	Vector ra = r1 * ac1;
+	Vector r = ra + rayOrigin;
+
+	if (ra.dot(r1) < 0.f) {
+		return 0;
+	}
+
+	float dist = (r - circleOrigin).length();
+	float a = asinf(dist / radius);
+	float c = cosf(a) * radius;
+
+	if (dist == radius) {
+		out1 = r;
+		out2 = r;
+		return 1;
+	} else if (dist < radius) {
+		out1 = r - r1 * c;
+		out2 = r + r1 * c;
+		return 2;
+	} else {
+		return 0;
+	}
+}
+
 Game::Game(float _boardW, float _boardH) {
 	boardW = _boardW;
 	boardH = _boardH;
@@ -14,6 +70,7 @@ Game::Game(float _boardW, float _boardH) {
 	if (!ai) {
 		init();
 	}
+	ticksPerSecond = mainEngine->getTicksPerSecond();
 }
 
 Game::~Game() {
@@ -24,10 +81,27 @@ Game::~Game() {
 	}
 }
 
+int Game::playSound(const char* filename, bool loop) {
+	if (!ai) {
+		return mainEngine->playSound(filename, loop);
+	} else {
+		return 0;
+	}
+}
+
+int Game::stopSound(int channel) {
+	if (!ai) {
+		return mainEngine->stopSound(channel);
+	} else {
+		return 0;
+	}
+}
+
 void Game::init() {
-	rand.seedTime();
+	rand.seedValue(0);
 	spawnPlayer();
 	spawnAsteroids();
+	gameInSession = true;
 }
 
 int Game::countAsteroids() {
@@ -82,11 +156,13 @@ void Game::term() {
 	beat = 70;
 	previousBeat = false;
 	ticks = 0;
+	gameInSession = false;
 }
 
 void Game::draw(Camera& camera) {
 	Renderer* renderer = mainEngine->getRenderer();
 	assert(renderer);
+
 	for (auto& entity : entities) {
 		entity->draw(camera);
 	}
@@ -163,6 +239,9 @@ void Game::doAI() {
 	if (mainEngine->pressKey(SDL_SCANCODE_F2)) {
 		ai->load();
 	}
+	if (mainEngine->pressKey(SDL_SCANCODE_F3)) {
+		ai->playTop();
+	}
 
 	// step AI
 	ai->process();
@@ -175,6 +254,9 @@ void Game::doAI() {
 }
 
 void Game::process() {
+	if (!gameInSession) {
+		return;
+	}
 	if (ai) {
 		doAI();
 	} else {
@@ -244,6 +326,7 @@ void Game::process() {
 			++wins;
 			wonTimer = 0.f;
 			spawnAsteroids();
+			score += 1000;
 			player->ticks = 0;
 		}
 	}
@@ -260,7 +343,7 @@ void Game::process() {
 	}
 
 	// spawn aliens
-	if (numAsteroids > 0 && ticks && ticks % (15 * mainEngine->getTicksPerSecond()) == 0 && rand.getUint8() % 2 == 0) {
+	if (numAsteroids > 0 && ticks && ticks % (15 * ticksPerSecond) == 0 && rand.getUint8() % 2 == 0) {
 		Alien* alien = new Alien(this);
 		bool right = rand.getUint8() % 2 == 0;
 		alien->pos.x = right ? boardW / 2.f : -boardW / 2.f;
@@ -270,7 +353,7 @@ void Game::process() {
 		alien->life = boardW;
 		alien->team = Entity::Team::TEAM_ENEMY;
 		alien->radius = 20.f;
-		alien->channel = mainEngine->playSound("sounds/alien.wav", true);
+		alien->channel = playSound("sounds/alien.wav", true);
 		addEntity(alien);
 	}
 
@@ -281,7 +364,7 @@ void Game::process() {
 	if (ticks && ticks % beat == 0) {
 		previousBeat = (previousBeat == false);
 		const char* path = previousBeat ? "sounds/beat.wav" : "sounds/beat2.wav";
-		mainEngine->playSound(path, false);
+		playSound(path, false);
 	}
 
 	++ticks;
@@ -331,30 +414,89 @@ void Entity::shootBullet(float speed, float range) {
 	game->addEntity(bullet);
 }
 
+float Entity::rayTrace(float angle) {
+	float result = FLT_MAX;
+	Vector intersect;
+
+	// test against edge of board
+	{
+		Vector start(-game->boardW / 2.f, -game->boardH / 2.f, 0.f);
+		Vector   end(game->boardW / 2.f, -game->boardH / 2.f, 0.f);
+		if (intersectRayLine(pos, angle, start, end, intersect)) {
+			result = std::min(result, (intersect - pos).length());
+		}
+	}
+	{
+		Vector start(-game->boardW / 2.f, game->boardH / 2.f, 0.f);
+		Vector   end(game->boardW / 2.f, game->boardH / 2.f, 0.f);
+		if (intersectRayLine(pos, angle, start, end, intersect)) {
+			result = std::min(result, (intersect - pos).length());
+		}
+	}
+	{
+		Vector start(-game->boardW / 2.f, -game->boardH / 2.f, 0.f);
+		Vector   end(-game->boardW / 2.f, game->boardH / 2.f, 0.f);
+		if (intersectRayLine(pos, angle, start, end, intersect)) {
+			result = std::min(result, (intersect - pos).length());
+		}
+	}
+	{
+		Vector start(game->boardW / 2.f, -game->boardH / 2.f, 0.f);
+		Vector   end(game->boardW / 2.f, game->boardH / 2.f, 0.f);
+		if (intersectRayLine(pos, angle, start, end, intersect)) {
+			result = std::min(result, (intersect - pos).length());
+		}
+	}
+
+	if (this == game->player && ticks < 120.f) {
+		return result;
+	}
+
+	// test against entities
+	for (auto entity : game->entities) {
+		if (entity == this || entity->team == Team::TEAM_NONE || entity->team == team) {
+			continue;
+		}
+		Vector intersect1, intersect2;
+		int num = intersectRayCircle(pos, angle, entity->pos, entity->radius, intersect1, intersect2);
+		if (num) {
+			result = std::min(result, (intersect1 - pos).length());
+		}
+	}
+
+	return result;
+}
+
 void Player::process() {
 	Vector front(cosf(ang), sinf(ang), 0.f);
 
-	if (vel.lengthSquared() == 0.f) {
+	int bullets = 0;
+	for (auto entity : game->entities) {
+		if (entity->team == Team::TEAM_ALLY && entity != game->player) {
+			++bullets;
+		}
+	}
+	if (bullets == 0 && vel.lengthSquared() == 0.f) {
 		moved = false;
 	}
 
 	if (game->inputs[Game::Input::IN_RIGHT]) {
-		ang += PI / mainEngine->getTicksPerSecond();
+		ang += PI / game->ticksPerSecond;
 		moved = true;
 	}
 	if (game->inputs[Game::Input::IN_LEFT]) {
-		ang -= PI / mainEngine->getTicksPerSecond();
+		ang -= PI / game->ticksPerSecond;
 		moved = true;
 	}
 	if (game->inputs[Game::Input::IN_THRUST]) {
-		vel += (front * 10.f) / mainEngine->getTicksPerSecond();
+		vel += (front * 10.f) / game->ticksPerSecond;
 		moved = true;
 	}
 	if (game->inputs[Game::Input::IN_SHOOT]) {
 		if (!shooting && ticks - shootTime > 6) {
 			shootTime = ticks;
 			shootBullet(10.f, 40.f);
-			mainEngine->playSound("sounds/shoot.wav", false);
+			game->playSound("sounds/shoot.wav", false);
 			moved = true;
 			shooting = true;
 		}
@@ -410,7 +552,7 @@ bool Player::onHit(const Entity* other) {
 		explosion->pos = pos;
 		explosion->radius = 0.f;
 		game->addEntity(explosion);
-		mainEngine->playSound("sounds/die.wav", false);
+		game->playSound("sounds/die.wav", false);
 		game->beat -= 10;
 		return true;
 	}
@@ -460,7 +602,7 @@ bool Asteroid::onHit(const Entity* other) {
 				sang = sinf(ang);
 			}
 		}
-		mainEngine->playSound("sounds/asteroid.wav", false);
+		game->playSound("sounds/asteroid.wav", false);
 		return true;
 	}
 	return false;
@@ -468,7 +610,7 @@ bool Asteroid::onHit(const Entity* other) {
 
 Alien::~Alien() {
 	if (channel >= 0) {
-		mainEngine->stopSound(channel);
+		game->stopSound(channel);
 	}
 }
 
@@ -477,7 +619,7 @@ void Alien::process() {
 
 	// shoot
 	Player* player = game->player;
-	if (player && ticks % mainEngine->getTicksPerSecond() == 0) {
+	if (player && ticks % game->ticksPerSecond == 0) {
 		Vector diff = player->pos - pos;
 		ang = atan2f(diff.y, diff.x);
 		shootBullet(10.f, 40.f);
@@ -485,12 +627,12 @@ void Alien::process() {
 
 	// state machine
 	if (state == State::GO_STRAIGHT) {
-		if (ticks % mainEngine->getTicksPerSecond() * 2 == 0 && game->rand.getUint8() % 3 == 0) {
+		if (ticks % game->ticksPerSecond * 2 == 0 && game->rand.getUint8() % 3 == 0) {
 			state = State::GO_DIAGONAL;
 			vel.y = game->rand.getUint8() % 2 == 0 ? 2.f : -2.f;
 		}
 	} else {
-		if (ticks % mainEngine->getTicksPerSecond() == 0) {
+		if (ticks % game->ticksPerSecond == 0) {
 			state = State::GO_STRAIGHT;
 			vel.y = 0.f;
 		}
@@ -509,7 +651,7 @@ bool Alien::onHit(const Entity* other) {
 		explosion->pos = pos;
 		explosion->radius = 0.f;
 		game->addEntity(explosion);
-		mainEngine->playSound("sounds/aliendie.wav", false);
+		game->playSound("sounds/aliendie.wav", false);
 		return true;
 	}
 	return false;

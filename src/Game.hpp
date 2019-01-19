@@ -52,6 +52,9 @@ public:
 	// shoot a bullet
 	void shootBullet(float speed, float range);
 
+	// ray trace the given angle, returning distance to the closest obstacle
+	float rayTrace(float angle);
+
 	Vector pos;
 	Vector vel;
 	float ang = 0.f;
@@ -187,6 +190,12 @@ public:
 	// spawn player
 	void spawnPlayer();
 
+	// play a sound
+	int playSound(const char* filename, bool loop);
+
+	// stop a sound
+	int stopSound(int channel);
+
 	// term
 	void term();
 
@@ -230,6 +239,8 @@ public:
 	Uint32 lives = 3;
 	Uint32 ticks = 0;
 	Random rand;
+	int ticksPerSecond = 0;
+	bool gameInSession = false;
 
 	AI* ai = nullptr;
 };

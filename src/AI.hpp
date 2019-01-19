@@ -91,7 +91,7 @@ public:
 
 	static float sigmoid(float x);
 
-	ArrayList<int> getInputs();
+	ArrayList<float> getInputs();
 
 	void clearJoypad();
 
@@ -149,7 +149,7 @@ class Neuron {
 public:
 	Neuron() {}
 
-	ArrayList<Gene> incoming;
+	ArrayList<Gene*> incoming;
 	float value = 0.f;
 };
 
@@ -219,7 +219,7 @@ public:
 
 	void enableDisableMutate(bool enable);
 
-	ArrayList<bool> evaluateNetwork(ArrayList<int>& inputs);
+	ArrayList<bool> evaluateNetwork(ArrayList<float>& inputs);
 
 	// save/load this object to a file
 	// @param file interface to serialize with
@@ -262,9 +262,9 @@ public:
 
 	Genome crossover(Genome* g1, Genome* g2);
 
-	int disjoint(Genome* g1, Genome* g2);
+	float disjoint(Genome* g1, Genome* g2);
 
-	int weights(Genome* g1, Genome* g2);
+	float weights(Genome* g1, Genome* g2);
 
 	bool sameSpecies(Genome* g1, Genome* g2);
 
