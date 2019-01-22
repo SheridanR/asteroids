@@ -76,6 +76,8 @@ Genome Genome::copy() {
 }
 
 void Genome::generateNetwork() {
+	network.neurons.clear();
+
 	for (int c = 0; c < pool->inputSize; ++c) {
 		network.neurons.insert(c, Neuron());
 	}
@@ -84,9 +86,8 @@ void Genome::generateNetwork() {
 		network.neurons.insert(AI::MaxNodes + c, Neuron());
 	}
 
-	// -.- sort function required
 	genes.sort(Gene::AscSort());
-	for (int i = 1; i < genes.getSize(); ++i) {
+	for (int i = 0; i < genes.getSize(); ++i) {
 		auto& gene = genes[i];
 		if (gene.enabled) {
 			if (network.neurons[gene.out] == nullptr) {
@@ -109,20 +110,18 @@ ArrayList<bool> Genome::evaluateNetwork(ArrayList<float>& inputs) {
 
 	for (int i = 0; i < pool->inputSize; ++i) {
 		Neuron* neuron = network.neurons[i];
-		if (neuron) {
-			neuron->value = inputs[i];
-		}
+		assert(neuron);
+		neuron->value = inputs[i];
 	}
 
 	for (auto& pair : network.neurons) {
 		auto& neuron = pair.b;
 		int sum = 0;
 		for (int j = 0; j < neuron.incoming.getSize(); ++j) {
-			auto& incoming = neuron.incoming[j];
+			auto incoming = neuron.incoming[j];
 			auto other = network.neurons[incoming->into];
-			if (other) {
-				sum += incoming->weight * other->value;
-			}
+			assert(other);
+			sum += incoming->weight * other->value;
 		}
 
 		if (neuron.incoming.getSize()) {
@@ -134,7 +133,8 @@ ArrayList<bool> Genome::evaluateNetwork(ArrayList<float>& inputs) {
 	outputs.resize(AI::Outputs);
 	for (int o = 0; o < AI::Outputs; ++o) {
 		Neuron* neuron = network.neurons[AI::MaxNodes + o];
-		if (neuron->value > 0) {
+		assert(neuron);
+		if (neuron->value > 0.f) {
 			outputs[o] = true;
 		} else {
 			outputs[o] = false;
@@ -373,17 +373,17 @@ Genome Species::crossover(Genome* g1, Genome* g2) {
 	Genome child;
 	child.pool = pool;
 
-	Map<int, Gene> innovations2;
+	Map<int, Gene*> innovations2;
 	for (int i = 0; i < g2->genes.getSize(); ++i) {
 		auto& gene = g2->genes[i];
-		innovations2.insert(gene.innovation, gene);
+		innovations2.insert(gene.innovation, &gene);
 	}
 
 	for (int i = 0; i < g1->genes.getSize(); ++i) {
 		auto& gene1 = g1->genes[i];
 		auto gene2 = innovations2[gene1.innovation];
-		if (gene2 != nullptr && pool->rand.getUint8()%2 == 0 && gene2->enabled) {
-			child.genes.push(gene2->copy());
+		if (gene2 != nullptr && pool->rand.getUint8()%2 == 0 && (*gene2)->enabled) {
+			child.genes.push((*gene2)->copy());
 		} else {
 			child.genes.push(gene1.copy());
 		}
@@ -393,9 +393,8 @@ Genome Species::crossover(Genome* g1, Genome* g2) {
 
 	for (auto& pair : g1->mutationRates) {
 		auto mutation = child.mutationRates[pair.a];
-		if (mutation) {
-			*mutation = pair.b;
-		}
+		assert(mutation);
+		*mutation = pair.b;
 	}
 
 	return child;
@@ -467,7 +466,7 @@ bool Species::sameSpecies(Genome* g1, Genome* g2) {
 
 	float dd = AI::DeltaDisjoint * disjoint(g1, g2);
 	float dw = AI::DeltaWeights * weights(g1, g2);
-	return dd + dw < AI::DeltaThreshold;
+	return (dd + dw) < AI::DeltaThreshold;
 }
 
 void Species::calculateAverageFitness() {
@@ -576,18 +575,16 @@ void Pool::removeStaleSpecies() {
 	ArrayList<Species> survived;
 	for (int s = 0; s < species.getSize(); ++s) {
 		auto& spec = species[s];
-		
-		if (spec.genomes.getSize() == 0) {
-			++spec.staleness;
-		} else {
-			spec.genomes.sort(Genome::DescSort());
 
-			if (spec.genomes[0].fitness > spec.topFitness) {
-				spec.topFitness = spec.genomes[0].fitness;
-				spec.staleness = 0;
-			} else {
-				++spec.staleness;
-			}
+		assert(spec.genomes.getSize());
+		
+		spec.genomes.sort(Genome::DescSort());
+
+		if (spec.genomes[0].fitness > spec.topFitness) {
+			spec.topFitness = spec.genomes[0].fitness;
+			spec.staleness = 0;
+		} else {
+			++spec.staleness;
 		}
 		if (spec.staleness < AI::StaleSpecies || spec.topFitness >= maxFitness) {
 			survived.push(spec);
@@ -601,7 +598,7 @@ void Pool::removeWeakSpecies() {
 	int sum = totalAverageFitness();
 	for (int s = 0; s < species.getSize(); ++s) {
 		auto& spec = species[s];
-		int breed = sum ? (int)floorf((float)spec.averageFitness / (float)sum * (float)AI::Population) : 0;
+		int breed = sum ? (int)floorf(((float)spec.averageFitness / (float)sum) * (float)AI::Population) : 1;
 		if (breed >= 1) {
 			survived.push(spec);
 		}
@@ -641,7 +638,7 @@ void Pool::newGeneration() {
 	ArrayList<Genome> children;
 	for (int s = 0; s < species.getSize(); ++s) {
 		auto& spec = species[s];
-		int breed = (int)floorf((float)spec.averageFitness / (float)sum * (float)AI::Population);
+		int breed = (int)floorf(((float)spec.averageFitness / (float)sum) * (float)AI::Population);
 		for (int i = 0; i < breed; ++i) {
 			children.push(spec.breedChild());
 		}
