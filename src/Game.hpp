@@ -53,7 +53,7 @@ public:
 	void shootBullet(float speed, float range);
 
 	// ray trace the given angle, returning distance to the closest obstacle
-	float rayTrace(float angle);
+	float rayTrace(Vector origin, float angle, int disableSide = 0, int count = 0);
 
 	Vector pos;
 	Vector vel;
@@ -65,6 +65,8 @@ public:
 	bool dead = false;
 	const Entity* lastEntityHit = nullptr;
 	Game* game = nullptr;
+	int shotsFired = 0;
+	int shotsHit = 0;
 };
 
 class Player : public Entity {
@@ -89,6 +91,8 @@ public:
 	bool moved = false;
 
 	bool shooting = false;
+
+	static const float shieldTime;
 };
 
 class Asteroid : public Entity {
@@ -155,6 +159,8 @@ public:
 	// draw the entity
 	// @param camera The camera to draw with
 	virtual void draw(Camera& camera) override;
+
+	Entity* parent = nullptr;
 };
 
 class Explosion : public Entity {

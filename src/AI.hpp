@@ -143,6 +143,8 @@ private:
 
 	int timeout = 0;
 	int framesSurvived = 0;
+	int shotsFired = 0;
+	int shotsHit = 0;
 };
 
 class Neuron {

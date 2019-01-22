@@ -724,7 +724,7 @@ void AI::init(int boardW, int boardH) {
 	pool->boardW = boardW / BoxRadius;
 	pool->boardH = boardH / BoxRadius;
 	//pool->inputSize = pool->boardW * pool->boardH;
-	pool->inputSize = 16;
+	pool->inputSize = 50;
 	pool->init();
 	pool->writeFile("temp.json");
 	initializeRun();
@@ -742,11 +742,13 @@ ArrayList<float> AI::getInputs() {
 
 	static const float dangerZone = 800.f;
 	if (game->player) {
-		float deathZone = game->player->radius * 2.f;
+		float deathZone = game->player->radius * 4.f;
 		float angle = 0.f;
 		float finc = (PI * 2.f) / pool->inputSize;
 		for (int c = 0; c < pool->inputSize; ++c) {
-			float dist = game->player->rayTrace(angle) - deathZone;
+			auto& pos = game->player->pos;
+			auto& ang = game->player->ang;
+			float dist = game->player->rayTrace(pos, ang + angle) - deathZone;
 			inputs[c] = std::min( std::max( 1.f - (dist / dangerZone), 0.f), 1.f );
 			angle += finc;
 		}
@@ -765,6 +767,8 @@ void AI::initializeRun() {
 	game->term();
 	game->init();
 	framesSurvived = 0;
+	shotsFired = 0;
+	shotsHit = 0;
 	timeout = TimeoutConstant;
 	pool->currentFrame = 0;
 	clearJoypad();
@@ -842,6 +846,8 @@ void AI::process() {
 	evaluateCurrent();
 
 	if (game->player) {
+		shotsFired = game->player->shotsFired;
+		shotsHit = game->player->shotsHit;
 		if (game->player->moved && (int)game->player->ticks > framesSurvived) {
 			framesSurvived = game->player->ticks;
 			timeout = TimeoutConstant;
@@ -850,13 +856,10 @@ void AI::process() {
 
 	--timeout;
 	int timeoutBonus = pool->currentFrame / 4;
-	if (timeout + timeoutBonus <= 0) {
-	//if (game->lives <= 0) {
-		//int fitness = framesSurvived - pool->currentFrame / 2;
-		//int fitness = 0;
-		//fitness += game->score;
-		//fitness -= game->losses * 1000;
+	if (timeout + timeoutBonus <= 0 || game->lives <= 2) {
 		int fitness = game->score;
+		fitness *= std::max(1.f, (float)framesSurvived);
+		fitness *= std::max((float)shotsHit, 1.f) / std::max((float)shotsFired, 1.f);
 		if (fitness == 0) {
 			fitness = -1;
 		}

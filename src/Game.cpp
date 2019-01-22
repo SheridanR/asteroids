@@ -387,9 +387,13 @@ bool Entity::onHit(const Entity* other) {
 		if (team == Entity::Team::TEAM_NONE || other->team == Entity::Team::TEAM_NONE) {
 			return false;
 		}
-		if ((game->player != this || this->ticks > 120.f) &&
-			(game->player != other || other->ticks > 120.f)) {
-			if (team == Team::TEAM_ENEMY) {
+		if ((game->player != this || this->ticks >= Player::shieldTime) &&
+			(game->player != other || other->ticks >= Player::shieldTime)) {
+			if (team == Team::TEAM_ENEMY && other->getType() == Type::TYPE_BULLET) {
+				auto bullet = static_cast<const Bullet*>(other);
+				if (bullet->parent) {
+					++bullet->parent->shotsHit;
+				}
 				game->score += getPoints();
 				game->beat -= 2;
 			}
@@ -411,46 +415,14 @@ void Entity::shootBullet(float speed, float range) {
 	bullet->life = range;
 	bullet->team = team;
 	bullet->radius = 2.f;
+	bullet->parent = this;
 	game->addEntity(bullet);
+	++shotsFired;
 }
 
-float Entity::rayTrace(float angle) {
+float Entity::rayTrace(Vector origin, float angle, int disableSide, int count) {
 	float result = FLT_MAX;
 	Vector intersect;
-
-	// test against edge of board
-	{
-		Vector start(-game->boardW / 2.f, -game->boardH / 2.f, 0.f);
-		Vector   end(game->boardW / 2.f, -game->boardH / 2.f, 0.f);
-		if (intersectRayLine(pos, angle, start, end, intersect)) {
-			result = std::min(result, (intersect - pos).length());
-		}
-	}
-	{
-		Vector start(-game->boardW / 2.f, game->boardH / 2.f, 0.f);
-		Vector   end(game->boardW / 2.f, game->boardH / 2.f, 0.f);
-		if (intersectRayLine(pos, angle, start, end, intersect)) {
-			result = std::min(result, (intersect - pos).length());
-		}
-	}
-	{
-		Vector start(-game->boardW / 2.f, -game->boardH / 2.f, 0.f);
-		Vector   end(-game->boardW / 2.f, game->boardH / 2.f, 0.f);
-		if (intersectRayLine(pos, angle, start, end, intersect)) {
-			result = std::min(result, (intersect - pos).length());
-		}
-	}
-	{
-		Vector start(game->boardW / 2.f, -game->boardH / 2.f, 0.f);
-		Vector   end(game->boardW / 2.f, game->boardH / 2.f, 0.f);
-		if (intersectRayLine(pos, angle, start, end, intersect)) {
-			result = std::min(result, (intersect - pos).length());
-		}
-	}
-
-	if (this == game->player && ticks < 120.f) {
-		return result;
-	}
 
 	// test against entities
 	for (auto entity : game->entities) {
@@ -458,14 +430,64 @@ float Entity::rayTrace(float angle) {
 			continue;
 		}
 		Vector intersect1, intersect2;
-		int num = intersectRayCircle(pos, angle, entity->pos, entity->radius, intersect1, intersect2);
+		int num = intersectRayCircle(origin, angle, entity->pos, entity->radius, intersect1, intersect2);
 		if (num) {
-			result = std::min(result, (intersect1 - pos).length());
+			result = std::min(result, (intersect1 - origin).length());
+		}
+	}
+
+	// test against edge of board
+	if (result == FLT_MAX && count < 2) {
+		if (disableSide != 1) { // top
+			Vector start(-game->boardW / 2.f, -game->boardH / 2.f, 0.f);
+			Vector   end(game->boardW / 2.f, -game->boardH / 2.f, 0.f);
+			if (intersectRayLine(origin, angle, start, end, intersect)) {
+				result = rayTrace(Vector(intersect.x, -intersect.y, 0.f), angle, 2, count + 1);
+				if (result != FLT_MAX) {
+					float distToEdge = (intersect - origin).length();
+					return distToEdge + result;
+				}
+			}
+		}
+		if (disableSide != 2) { // bottom
+			Vector start(-game->boardW / 2.f, game->boardH / 2.f, 0.f);
+			Vector   end(game->boardW / 2.f, game->boardH / 2.f, 0.f);
+			if (intersectRayLine(origin, angle, start, end, intersect)) {
+				result = rayTrace(Vector(intersect.x, -intersect.y, 0.f), angle, 1, count + 1);
+				if (result != FLT_MAX) {
+					float distToEdge = (intersect - origin).length();
+					return distToEdge + result;
+				}
+			}
+		}
+		if (disableSide != 3) { // left
+			Vector start(-game->boardW / 2.f, -game->boardH / 2.f, 0.f);
+			Vector   end(-game->boardW / 2.f, game->boardH / 2.f, 0.f);
+			if (intersectRayLine(origin, angle, start, end, intersect)) {
+				result = rayTrace(Vector(-intersect.x, intersect.y, 0.f), angle, 4, count + 1);
+				if (result != FLT_MAX) {
+					float distToEdge = (intersect - origin).length();
+					return distToEdge + result;
+				}
+			}
+		}
+		if (disableSide != 4) { // right
+			Vector start(game->boardW / 2.f, -game->boardH / 2.f, 0.f);
+			Vector   end(game->boardW / 2.f, game->boardH / 2.f, 0.f);
+			if (intersectRayLine(origin, angle, start, end, intersect)) {
+				result = rayTrace(Vector(-intersect.x, intersect.y, 0.f), angle, 3, count + 1);
+				if (result != FLT_MAX) {
+					float distToEdge = (intersect - origin).length();
+					return distToEdge + result;
+				}
+			}
 		}
 	}
 
 	return result;
 }
+
+const float Player::shieldTime = 0.f;
 
 void Player::process() {
 	Vector front(cosf(ang), sinf(ang), 0.f);
@@ -527,7 +549,7 @@ void Player::draw(Camera& camera) {
 	camera.line->drawLine(camera, src, dest, color);
 
 	// draw shield
-	if (ticks <= 120.f) {
+	if (ticks < shieldTime) {
 		float angle = 0.f;
 		static const int steps = 15;
 		static const float finc = (PI * 2.f) / (float)steps;
