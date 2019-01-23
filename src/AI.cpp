@@ -6,9 +6,8 @@
 #include "Game.hpp"
 
 const int AI::BoxRadius = 40;
-const int AI::Outputs = OUT_MAX;
+const int AI::Outputs = Attempt::Output::OUT_MAX;
 
-const int AI::Population = 300;
 const float AI::DeltaDisjoint = 2.f;
 const float AI::DeltaWeights = 0.4f;
 const float AI::DeltaThreshold = 1.f;
@@ -102,10 +101,10 @@ void Genome::generateNetwork() {
 	}
 }
 
-ArrayList<bool> Genome::evaluateNetwork(ArrayList<float>& inputs) {
+ArrayList<float> Genome::evaluateNetwork(ArrayList<float>& inputs) {
 	if (inputs.getSize() != pool->inputSize) {
 		mainEngine->fmsg(Engine::MSG_WARN, "incorrect number of neural network inputs");
-		return ArrayList<bool>();
+		return ArrayList<float>();
 	}
 
 	for (int i = 0; i < pool->inputSize; ++i) {
@@ -129,16 +128,12 @@ ArrayList<bool> Genome::evaluateNetwork(ArrayList<float>& inputs) {
 		}
 	}
 
-	ArrayList<bool> outputs;
+	ArrayList<float> outputs;
 	outputs.resize(AI::Outputs);
 	for (int o = 0; o < AI::Outputs; ++o) {
 		Neuron* neuron = network.neurons[AI::MaxNodes + o];
 		assert(neuron);
-		if (neuron->value > 0.f) {
-			outputs[o] = true;
-		} else {
-			outputs[o] = false;
-		}
+		outputs[o] = neuron->value;
 	}
 
 	return outputs;
@@ -721,7 +716,7 @@ void AI::init(int boardW, int boardH) {
 	pool->boardW = boardW / BoxRadius;
 	pool->boardH = boardH / BoxRadius;
 	//pool->inputSize = pool->boardW * pool->boardH;
-	pool->inputSize = 50;
+	pool->inputSize = 40;
 	pool->init();
 	pool->writeFile("temp.json");
 	initializeRun();
@@ -737,16 +732,20 @@ ArrayList<float> AI::getInputs() {
 	ArrayList<float> inputs;
 	inputs.resize(pool->inputSize);
 
-	static const float dangerZone = 800.f;
 	if (game->player) {
-		float deathZone = game->player->radius * 4.f;
 		float angle = 0.f;
-		float finc = (PI * 2.f) / pool->inputSize;
-		for (int c = 0; c < pool->inputSize; ++c) {
+		float finc = ((PI * 2.f) / pool->inputSize) * 2.f;
+		for (int c = 0; c < pool->inputSize; c += 2) {
 			auto& pos = game->player->pos;
 			auto& ang = game->player->ang;
-			float dist = game->player->rayTrace(pos, ang + angle) - deathZone;
-			inputs[c] = std::min( std::max( 1.f - (dist / dangerZone), 0.f), 1.f );
+			auto result = game->player->rayTrace(pos, ang + angle);
+			if (result.a) {
+				inputs[c] = 1.f / result.b;
+				inputs[c + 1] = result.a->vel.normal().dot(game->player->vel.normal());
+			} else {
+				inputs[c] = 0.f;
+				inputs[c + 1] = 0.f;
+			}
 			angle += finc;
 		}
 	}
@@ -754,64 +753,74 @@ ArrayList<float> AI::getInputs() {
 	return inputs;
 }
 
-void AI::clearJoypad() {
-	for (int c = 0; c < (int)Output::OUT_MAX; ++c) {
-		outputs[c] = false;
+void AI::clearJoypad(int attempt) {
+	auto& a = pool->attempts[attempt];
+	for (int c = 0; c < (int)Attempt::Output::OUT_MAX; ++c) {
+		a.outputs[c] = false;
 	}
 }
 
-void AI::initializeRun() {
+void AI::initializeRun(int attempt) {
 	game->term();
 	game->init();
-	framesSurvived = 0;
-	shotsFired = 0;
-	shotsHit = 0;
-	timeout = TimeoutConstant;
-	pool->currentFrame = 0;
-	clearJoypad();
-	auto& spec = pool->species[pool->currentSpecies];
-	auto& genome = spec.genomes[pool->currentGenome];
+	auto& a = pool->attempts[attempt];
+	a.framesSurvived = 0;
+	a.shotsFired = 0;
+	a.shotsHit = 0;
+	a.timeout = TimeoutConstant;
+	a.currentFrame = 0;
+	clearJoypad(attempt);
+	auto& spec = pool->species[a.currentSpecies];
+	auto& genome = spec.genomes[a.currentGenome];
 	genome.generateNetwork();
-	evaluateCurrent();
+	evaluateCurrent(attempt);
 }
 
-void AI::evaluateCurrent() {
-	auto& spec = pool->species[pool->currentSpecies];
-	auto& genome = spec.genomes[pool->currentGenome];
+void AI::evaluateCurrent(int attempt) {
+	auto& a = pool->attempts[attempt];
+	auto& spec = pool->species[a.currentSpecies];
+	auto& genome = spec.genomes[a.currentGenome];
 
 	auto inputs = getInputs();
 	auto controller = genome.evaluateNetwork(inputs);
 
 	if (controller.getSize()) {
-		if (controller[Output::OUT_LEFT] && controller[Output::OUT_RIGHT]) {
-			controller[Output::OUT_LEFT] = false;
-			controller[Output::OUT_RIGHT] = false;
+		if (controller[Attempt::Output::OUT_LEFT] && controller[Attempt::Output::OUT_RIGHT]) {
+			controller[Attempt::Output::OUT_LEFT] = false;
+			controller[Attempt::Output::OUT_RIGHT] = false;
 		}
-		for (int c = 0; c < (int)Output::OUT_MAX; ++c) {
-			outputs[c] = controller[c];
+		for (int c = 0; c < (int)Attempt::Output::OUT_MAX; ++c) {
+			a.outputs[c] = controller[c];
 		}
 	} else {
-		for (int c = 0; c < (int)Output::OUT_MAX; ++c) {
-			outputs[c] = false;
+		for (int c = 0; c < (int)Attempt::Output::OUT_MAX; ++c) {
+			a.outputs[c] = false;
 		}
 	}
 }
 
 void AI::nextGenome() {
-	++pool->currentGenome;
-	if (pool->currentGenome >= pool->species[pool->currentSpecies].genomes.getSize()) {
-		pool->currentGenome = 0;
-		++pool->currentSpecies;
-		if (pool->currentSpecies >= pool->species.getSize()) {
-			pool->newGeneration();
-			pool->currentSpecies = 0;
+	pool->attempts.push(Attempt());
+	if (pool->attempts.getSize() > 1) {
+		auto& newAttempt = pool->attempts[pool->attempts.getSize() - 1];
+		auto& oldAttempt = pool->attempts[pool->attempts.getSize() - 2];
+		newAttempt.currentSpecies = oldAttempt.currentSpecies;
+		newAttempt.currentGenome = oldAttempt.currentGenome + 1;
+		if (newAttempt.currentGenome >= pool->species[newAttempt.currentSpecies].genomes.getSize()) {
+			newAttempt.currentGenome = 0;
+			++newAttempt.currentSpecies;
+			if (newAttempt.currentSpecies >= pool->species.getSize()) {
+				assert(0);
+				//pool->newGeneration();
+				//pool->currentSpecies = 0;
+			}
 		}
 	}
 }
 
-bool AI::fitnessAlreadyMeasured() {
-	auto& spec = pool->species[pool->currentSpecies];
-	auto& genome = spec.genomes[pool->currentGenome];
+bool AI::fitnessAlreadyMeasured(int attempt) {
+	auto& spec = pool->species[pool->attempts[attempt].currentSpecies];
+	auto& genome = spec.genomes[pool->attempts[attempt].currentGenome];
 	return genome.fitness != 0;
 }
 
@@ -830,11 +839,14 @@ void AI::playTop() {
 		}
 	}
 
-	pool->currentSpecies = maxs;
+	pool->attempts.clear();
+	pool->attempts.push(Attempt());
+
+	/*pool->currentSpecies = maxs;
 	pool->currentGenome = maxg;
 	pool->maxFitness = maxFitness;
 	initializeRun();
-	++pool->currentFrame;
+	++pool->currentFrame;*/
 }
 
 void AI::process() {
@@ -845,8 +857,8 @@ void AI::process() {
 	if (game->player) {
 		shotsFired = game->player->shotsFired;
 		shotsHit = game->player->shotsHit;
-		if (game->player->moved && (int)game->player->ticks > framesSurvived) {
-			framesSurvived = game->player->ticks;
+		framesSurvived = std::max(framesSurvived, (int)game->player->ticks);
+		if (game->player->moved) {
 			timeout = TimeoutConstant;
 		}
 	}
@@ -854,7 +866,7 @@ void AI::process() {
 	--timeout;
 	int timeoutBonus = pool->currentFrame / 4;
 	if (timeout + timeoutBonus <= 0 || game->lives <= 2) {
-		int fitness = game->score;
+		int fitness = game->score + 1;
 		fitness *= std::max(1.f, (float)framesSurvived);
 		fitness *= std::max((float)shotsHit, 1.f) / std::max((float)shotsFired, 1.f);
 		if (fitness == 0) {

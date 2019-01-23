@@ -51,17 +51,36 @@ public:
 	// @param file interface to serialize with
 	void serialize(FileInterface * file);
 
-	Random rand;
-	Uint32 currentFrame = 0;
-	int currentSpecies = 0; // index from 0
-	int currentGenome = 0; // index from 0
 	int generation = 0;
 	int innovation;
 	int maxFitness = 0;
 	ArrayList<Species> species;
-
 	int inputSize = 0;
 	int boardW = 0, boardH = 0;
+	Random rand;
+
+	ArrayList<Attempt> attempts;
+};
+
+class Attempt {
+public:
+	int timeout = 0;
+	int framesSurvived = 0;
+	int shotsFired = 0;
+	int shotsHit = 0;
+	Uint32 currentFrame = 0;
+	int currentSpecies = 0; // index from 0
+	int currentGenome = 0; // index from 0
+
+	// controller outputs
+	enum Output {
+		OUT_THRUST,
+		OUT_RIGHT,
+		OUT_LEFT,
+		OUT_SHOOT,
+		OUT_MAX
+	};
+	float outputs[Output::OUT_MAX];
 };
 
 class AI {
@@ -71,9 +90,9 @@ public:
 
 	// getters
 	int getGeneration() const { return pool ? pool->generation : 0; }
-	int getSpecies() const { return pool ? pool->currentSpecies : 0; }
-	int getGenome() const { return pool ? pool->currentGenome : 0; }
 	int getMaxFitness() const { return pool ? pool->maxFitness : 0; }
+	int getSpecies(int c) const { return pool ? pool->attempts[c].currentSpecies : 0; }
+	int getGenome(int c) const { return pool ? pool->attempts[c].currentGenome : 0; }
 
 	// setup
 	void init(int boardW, int boardH);
@@ -93,30 +112,20 @@ public:
 
 	ArrayList<float> getInputs();
 
-	void clearJoypad();
+	void clearJoypad(int attempt);
 
-	void initializeRun();
+	void initializeRun(int attempt);
 
-	void evaluateCurrent();
+	void evaluateCurrent(int attempt);
 
 	void nextGenome();
 
-	bool fitnessAlreadyMeasured();
+	bool fitnessAlreadyMeasured(int attempt);
 
 	static const int BoxRadius;
 	static const int Outputs;
 
-	// controller outputs
-	enum Output {
-		OUT_THRUST,
-		OUT_RIGHT,
-		OUT_LEFT,
-		OUT_SHOOT,
-		OUT_MAX
-	};
-	bool outputs[Output::OUT_MAX];
-
-	static const int Population;
+	static const int Population = 300;
 	static const float DeltaDisjoint;
 	static const float DeltaWeights;
 	static const float DeltaThreshold;
@@ -140,11 +149,6 @@ public:
 private:
 	Game* game = nullptr;
 	Pool* pool = nullptr;
-
-	int timeout = 0;
-	int framesSurvived = 0;
-	int shotsFired = 0;
-	int shotsHit = 0;
 };
 
 class Neuron {
@@ -221,7 +225,7 @@ public:
 
 	void enableDisableMutate(bool enable);
 
-	ArrayList<bool> evaluateNetwork(ArrayList<float>& inputs);
+	ArrayList<float> evaluateNetwork(ArrayList<float>& inputs);
 
 	// save/load this object to a file
 	// @param file interface to serialize with

@@ -244,13 +244,15 @@ void Game::doAI() {
 	}
 
 	// step AI
+	mainEngine->setPaused(true);
 	ai->process();
+	mainEngine->setPaused(false);
 
 	// apply inputs
-	inputs[IN_THRUST] = ai->outputs[AI::Output::OUT_THRUST];
-	inputs[IN_RIGHT] = ai->outputs[AI::Output::OUT_RIGHT];
-	inputs[IN_LEFT] = ai->outputs[AI::Output::OUT_LEFT];
-	inputs[IN_SHOOT] = ai->outputs[AI::Output::OUT_SHOOT];
+	inputs[IN_THRUST] = ai->outputs[AI::Output::OUT_THRUST] > 0.8f;
+	inputs[IN_RIGHT] = ai->outputs[AI::Output::OUT_RIGHT] > 0.8f;
+	inputs[IN_LEFT] = ai->outputs[AI::Output::OUT_LEFT] > 0.8f;
+	inputs[IN_SHOOT] = ai->outputs[AI::Output::OUT_SHOOT] > 0.8f;
 }
 
 void Game::process() {
@@ -420,8 +422,10 @@ void Entity::shootBullet(float speed, float range) {
 	++shotsFired;
 }
 
-float Entity::rayTrace(Vector origin, float angle, int disableSide, int count) {
-	float result = FLT_MAX;
+OrderedPair<Entity*, float> Entity::rayTrace(Vector origin, float angle, int disableSide, int count) {
+	OrderedPair<Entity*, float> result;
+	result.a = nullptr;
+	result.b = FLT_MAX;
 	Vector intersect;
 
 	// test against entities
@@ -432,20 +436,22 @@ float Entity::rayTrace(Vector origin, float angle, int disableSide, int count) {
 		Vector intersect1, intersect2;
 		int num = intersectRayCircle(origin, angle, entity->pos, entity->radius, intersect1, intersect2);
 		if (num) {
-			result = std::min(result, (intersect1 - origin).length());
+			result.a = entity;
+			result.b = std::min(result.b, (origin - intersect1).length());
 		}
 	}
 
 	// test against edge of board
-	if (result == FLT_MAX && count < 2) {
+	if (result.b == FLT_MAX && count < 2) {
 		if (disableSide != 1) { // top
 			Vector start(-game->boardW / 2.f, -game->boardH / 2.f, 0.f);
 			Vector   end(game->boardW / 2.f, -game->boardH / 2.f, 0.f);
 			if (intersectRayLine(origin, angle, start, end, intersect)) {
 				result = rayTrace(Vector(intersect.x, -intersect.y, 0.f), angle, 2, count + 1);
-				if (result != FLT_MAX) {
+				if (result.b != FLT_MAX) {
 					float distToEdge = (intersect - origin).length();
-					return distToEdge + result;
+					result.b += distToEdge;
+					return result;
 				}
 			}
 		}
@@ -454,9 +460,10 @@ float Entity::rayTrace(Vector origin, float angle, int disableSide, int count) {
 			Vector   end(game->boardW / 2.f, game->boardH / 2.f, 0.f);
 			if (intersectRayLine(origin, angle, start, end, intersect)) {
 				result = rayTrace(Vector(intersect.x, -intersect.y, 0.f), angle, 1, count + 1);
-				if (result != FLT_MAX) {
+				if (result.b != FLT_MAX) {
 					float distToEdge = (intersect - origin).length();
-					return distToEdge + result;
+					result.b += distToEdge;
+					return result;
 				}
 			}
 		}
@@ -465,9 +472,10 @@ float Entity::rayTrace(Vector origin, float angle, int disableSide, int count) {
 			Vector   end(-game->boardW / 2.f, game->boardH / 2.f, 0.f);
 			if (intersectRayLine(origin, angle, start, end, intersect)) {
 				result = rayTrace(Vector(-intersect.x, intersect.y, 0.f), angle, 4, count + 1);
-				if (result != FLT_MAX) {
+				if (result.b != FLT_MAX) {
 					float distToEdge = (intersect - origin).length();
-					return distToEdge + result;
+					result.b += distToEdge;
+					return result;
 				}
 			}
 		}
@@ -476,9 +484,10 @@ float Entity::rayTrace(Vector origin, float angle, int disableSide, int count) {
 			Vector   end(game->boardW / 2.f, game->boardH / 2.f, 0.f);
 			if (intersectRayLine(origin, angle, start, end, intersect)) {
 				result = rayTrace(Vector(-intersect.x, intersect.y, 0.f), angle, 3, count + 1);
-				if (result != FLT_MAX) {
+				if (result.b != FLT_MAX) {
 					float distToEdge = (intersect - origin).length();
-					return distToEdge + result;
+					result.b += distToEdge;
+					return result;
 				}
 			}
 		}

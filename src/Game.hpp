@@ -7,6 +7,7 @@
 #include "LinkedList.hpp"
 #include "Camera.hpp"
 #include "Random.hpp"
+#include "Pair.hpp"
 
 class Game;
 class AI;
@@ -53,7 +54,7 @@ public:
 	void shootBullet(float speed, float range);
 
 	// ray trace the given angle, returning distance to the closest obstacle
-	float rayTrace(Vector origin, float angle, int disableSide = 0, int count = 0);
+	OrderedPair<Entity*, float> rayTrace(Vector origin, float angle, int disableSide = 0, int count = 0);
 
 	Vector pos;
 	Vector vel;
@@ -248,5 +249,6 @@ public:
 	int ticksPerSecond = 0;
 	bool gameInSession = false;
 
+	int id = 0;
 	AI* ai = nullptr;
 };
