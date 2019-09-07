@@ -62,23 +62,16 @@ int intersectRayCircle(const Vector& rayOrigin, const float rayAngle, const Vect
 	}
 }
 
-Game::Game(float _boardW, float _boardH) {
+Game::Game(AI* _ai, float _boardW, float _boardH) {
+	ai = _ai;
 	boardW = _boardW;
 	boardH = _boardH;
-	ai = new AI(this);
-	ai->init((int)boardW, (int)boardH);
-	if (!ai) {
-		init();
-	}
-	ticksPerSecond = mainEngine->getTicksPerSecond();
+	//ticksPerSecond = mainEngine->getTicksPerSecond();
+	ticksPerSecond = 60;
 }
 
 Game::~Game() {
 	term();
-	if (ai) {
-		delete ai;
-		ai = nullptr;
-	}
 }
 
 int Game::playSound(const char* filename, bool loop) {
@@ -123,7 +116,7 @@ void Game::spawnPlayer() {
 }
 
 void Game::spawnAsteroids() {
-	Uint8 asteroidNum = 10;
+	Uint8 asteroidNum = 20;
 	for (Uint8 c = 0; c < asteroidNum; ++c) {
 		Asteroid* asteroid = new Asteroid(this);
 		asteroid->radius = 40.f;
@@ -196,30 +189,21 @@ void Game::draw(Camera& camera) {
 			renderer->printText(rect, buf.get());
 		}
 
-		// species
+		// measured
 		{
 			Rect<int> rect;
 			rect.x = 10; rect.y = 70;
 			rect.w = 0; rect.h = 0;
-			StringBuf<32> buf("Species: %d", ai->getSpecies());
-			renderer->printText(rect, buf.get());
-		}
-
-		// genome
-		{
-			Rect<int> rect;
-			rect.x = 10; rect.y = 90;
-			rect.w = 0; rect.h = 0;
-			StringBuf<32> buf("Genome: %d", ai->getGenome());
+			StringBuf<32> buf("Measured: %d%%", ai->getMeasured());
 			renderer->printText(rect, buf.get());
 		}
 
 		// max fitness
 		{
 			Rect<int> rect;
-			rect.x = 10; rect.y = 110;
+			rect.x = 10; rect.y = 90;
 			rect.w = 0; rect.h = 0;
-			StringBuf<32> buf("Max fitness: %d", ai->getMaxFitness());
+			StringBuf<32> buf("Max fitness: %lld", ai->getMaxFitness());
 			renderer->printText(rect, buf.get());
 		}
 	}
@@ -233,26 +217,12 @@ void Game::doKeyboardInput() {
 }
 
 void Game::doAI() {
-	if (mainEngine->pressKey(SDL_SCANCODE_F1)) {
-		ai->save();
-	}
-	if (mainEngine->pressKey(SDL_SCANCODE_F2)) {
-		ai->load();
-	}
-	if (mainEngine->pressKey(SDL_SCANCODE_F3)) {
-		ai->playTop();
-	}
-
-	// step AI
-	mainEngine->setPaused(true);
-	ai->process();
-	mainEngine->setPaused(false);
-
-	// apply inputs
-	inputs[IN_THRUST] = ai->outputs[AI::Output::OUT_THRUST] > 0.8f;
-	inputs[IN_RIGHT] = ai->outputs[AI::Output::OUT_RIGHT] > 0.8f;
-	inputs[IN_LEFT] = ai->outputs[AI::Output::OUT_LEFT] > 0.8f;
-	inputs[IN_SHOOT] = ai->outputs[AI::Output::OUT_SHOOT] > 0.8f;
+	float (&outputs)[3] = genome->outputs;
+	inputs[IN_THRUST] = outputs[0] > 0.f;
+	inputs[IN_RIGHT] = outputs[1] > 0.f;
+	inputs[IN_LEFT] = outputs[2] > 0.f;
+	inputs[IN_SHOOT] = false;
+	//inputs[IN_SHOOT] = outputs[3] > 0.f;
 }
 
 void Game::process() {
@@ -345,6 +315,8 @@ void Game::process() {
 	}
 
 	// spawn aliens
+#define SPAWN_ALIENS
+#ifdef SPAWN_ALIENS
 	if (numAsteroids > 0 && ticks && ticks % (15 * ticksPerSecond) == 0 && rand.getUint8() % 2 == 0) {
 		Alien* alien = new Alien(this);
 		bool right = rand.getUint8() % 2 == 0;
@@ -358,6 +330,7 @@ void Game::process() {
 		alien->channel = playSound("sounds/alien.wav", true);
 		addEntity(alien);
 	}
+#endif
 
 	// beat
 	if (beat < 20) {
@@ -442,13 +415,13 @@ OrderedPair<Entity*, float> Entity::rayTrace(Vector origin, float angle, int dis
 	}
 
 	// test against edge of board
-	if (result.b == FLT_MAX && count < 2) {
+	if (result.a == nullptr && count < 2) {
 		if (disableSide != 1) { // top
 			Vector start(-game->boardW / 2.f, -game->boardH / 2.f, 0.f);
 			Vector   end(game->boardW / 2.f, -game->boardH / 2.f, 0.f);
 			if (intersectRayLine(origin, angle, start, end, intersect)) {
 				result = rayTrace(Vector(intersect.x, -intersect.y, 0.f), angle, 2, count + 1);
-				if (result.b != FLT_MAX) {
+				if (result.a != nullptr) {
 					float distToEdge = (intersect - origin).length();
 					result.b += distToEdge;
 					return result;
@@ -460,7 +433,7 @@ OrderedPair<Entity*, float> Entity::rayTrace(Vector origin, float angle, int dis
 			Vector   end(game->boardW / 2.f, game->boardH / 2.f, 0.f);
 			if (intersectRayLine(origin, angle, start, end, intersect)) {
 				result = rayTrace(Vector(intersect.x, -intersect.y, 0.f), angle, 1, count + 1);
-				if (result.b != FLT_MAX) {
+				if (result.a != nullptr) {
 					float distToEdge = (intersect - origin).length();
 					result.b += distToEdge;
 					return result;
@@ -472,7 +445,7 @@ OrderedPair<Entity*, float> Entity::rayTrace(Vector origin, float angle, int dis
 			Vector   end(-game->boardW / 2.f, game->boardH / 2.f, 0.f);
 			if (intersectRayLine(origin, angle, start, end, intersect)) {
 				result = rayTrace(Vector(-intersect.x, intersect.y, 0.f), angle, 4, count + 1);
-				if (result.b != FLT_MAX) {
+				if (result.a != nullptr) {
 					float distToEdge = (intersect - origin).length();
 					result.b += distToEdge;
 					return result;
@@ -484,7 +457,7 @@ OrderedPair<Entity*, float> Entity::rayTrace(Vector origin, float angle, int dis
 			Vector   end(game->boardW / 2.f, game->boardH / 2.f, 0.f);
 			if (intersectRayLine(origin, angle, start, end, intersect)) {
 				result = rayTrace(Vector(-intersect.x, intersect.y, 0.f), angle, 3, count + 1);
-				if (result.b != FLT_MAX) {
+				if (result.a != nullptr) {
 					float distToEdge = (intersect - origin).length();
 					result.b += distToEdge;
 					return result;
@@ -501,6 +474,9 @@ const float Player::shieldTime = 0.f;
 void Player::process() {
 	Vector front(cosf(ang), sinf(ang), 0.f);
 
+	// velocity dampening
+	//vel = vel * 0.8f;
+
 	int bullets = 0;
 	for (auto entity : game->entities) {
 		if (entity->team == Team::TEAM_ALLY && entity != game->player) {
@@ -512,11 +488,11 @@ void Player::process() {
 	}
 
 	if (game->inputs[Game::Input::IN_RIGHT]) {
-		ang += PI / game->ticksPerSecond;
+		ang += (PI / game->ticksPerSecond);
 		moved = true;
 	}
 	if (game->inputs[Game::Input::IN_LEFT]) {
-		ang -= PI / game->ticksPerSecond;
+		ang -= (PI / game->ticksPerSecond);
 		moved = true;
 	}
 	if (game->inputs[Game::Input::IN_THRUST]) {
@@ -524,7 +500,7 @@ void Player::process() {
 		moved = true;
 	}
 	if (game->inputs[Game::Input::IN_SHOOT]) {
-		if (!shooting && ticks - shootTime > 6) {
+		if (!shooting) {
 			shootTime = ticks;
 			shootBullet(10.f, 40.f);
 			game->playSound("sounds/shoot.wav", false);
@@ -533,7 +509,9 @@ void Player::process() {
 		}
 	}
 	if (!game->inputs[Game::Input::IN_SHOOT]) {
-		shooting = false;
+		if (ticks - shootTime > 6) {
+			shooting = false;
+		}
 	}
 	if (vel.lengthSquared() > 100.f) {
 		vel = vel.normal() * 10.f;
@@ -623,7 +601,8 @@ bool Asteroid::onHit(const Entity* other) {
 			for (int c = 0; c < 2; ++c) {
 				Asteroid* asteroid = new Asteroid(game);
 				asteroid->radius = radius / 2.f;
-				asteroid->vel = vel + Vector(cang * rand.getFloat() * 5.f, sang * rand.getFloat() * 5.f, 0.f);
+				//asteroid->vel = vel + Vector(cang * rand.getFloat() * 5.f, sang * rand.getFloat() * 5.f, 0.f);
+				asteroid->vel = Vector(rand.getFloat(), rand.getFloat(), 0.f);
 				asteroid->pos = pos + Vector(cang * radius / 2.f, sang * radius / 2.f, 0.f);
 				asteroid->team = Entity::Team::TEAM_ENEMY;
 				game->addEntity(asteroid);

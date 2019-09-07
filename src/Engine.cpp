@@ -5,6 +5,7 @@
 #include "Renderer.hpp"
 #include "Directory.hpp"
 #include "Game.hpp"
+#include "AI.hpp"
 
 #include <chrono>
 
@@ -115,7 +116,10 @@ void Engine::init() {
 
 	// start game
 	fmsg(Engine::MSG_INFO,"starting game");
-	gamestate = new Game(xres, yres);
+	gamestate = new Game(nullptr, xres, yres);
+	gamestate->init();
+	//ai = new AI();
+	//ai->init();
 
 	// instantiate a timer
 	timerRunning = true;
@@ -132,6 +136,10 @@ void Engine::loadResources(const char* folder) {
 }
 
 void Engine::term() {
+	if (ai) {
+		delete ai;
+		ai = nullptr;
+	}
 	if (gamestate) {
 		delete gamestate;
 		gamestate = nullptr;
@@ -532,7 +540,7 @@ void Engine::preProcess() {
 	SDL_SetRelativeMouseMode((SDL_bool)mainEngine->isMouseRelative());
 
 	// restart timer
-	unsigned int newTicksPerSecond = 60;
+	unsigned int newTicksPerSecond = defaultTickRate;
 	if( newTicksPerSecond != ticksPerSecond ) {
 		ticksPerSecond = newTicksPerSecond;
 		timerRunning = false;
@@ -678,16 +686,33 @@ void Engine::preProcess() {
 
 void Engine::process() {
 	// game logic here
+	bool allFinished = false;
 	while (framesToRun > 0) {
-		gamestate->process();
+		if (ai) {
+			allFinished = ai->process() ? true : allFinished;
+		}
+		else if (gamestate) {
+			gamestate->process();
+		}
 		--framesToRun;
+	}
+	if (allFinished) {
+		ai->nextGeneration();
 	}
 }
 
 void Engine::postProcess() {
-	if( ranFrames ) {
+	if (ranFrames) {
 		renderer->clearBuffers();
-		gamestate->draw(renderer->getCamera());
+		if (ai && ai->focus) {
+			ai->focus->draw(renderer->getCamera());
+		}
+		else if (gamestate) {
+			gamestate->draw(renderer->getCamera());
+		}
+		StringBuf<16> buf("fps: %4.1f", fps);
+		Rect<Sint32> rect(10, yres - 20, 0, 0);
+		renderer->printTextColor(rect, glm::vec4(1.f, 0.f, 1.f, 1.f), buf.get());
 		renderer->swapWindow();
 
 		mousexrel = 0;

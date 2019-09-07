@@ -51,6 +51,9 @@ public:
 		writer.Key(fieldName);
 	}
 
+	virtual void value(int64_t& value) override {
+		writer.Int(value);
+	}
 	virtual void value(Uint32& value) override {
 		writer.Uint(value);
 	}
@@ -130,6 +133,11 @@ public:
 	}
 	virtual void propertyName(const char * fieldName) override {
 		propName = fieldName;
+	}
+	virtual void value(int64_t& value) override {
+		auto cv = GetCurrentValue();
+		assert(cv->IsInt());
+		value = cv->GetInt();
 	}
 	virtual void value(Uint32& value) override {
 		auto cv = GetCurrentValue();
@@ -272,6 +280,9 @@ public:
 	virtual void propertyName(const char * name) override {
 	}
 
+	virtual void value(int64_t& v) override {
+		fwrite(&v, sizeof(v), 1, fp);
+	}
 	virtual void value(Uint32& v) override {
 		fwrite(&v, sizeof(v), 1, fp);
 	}
@@ -350,6 +361,10 @@ public:
 	virtual void propertyName(const char * name) override {
 	}
 
+	virtual void value(int64_t& v) override {
+		size_t read = fread(&v, sizeof(v), 1, fp);
+		assert(read == 1);
+	}
 	virtual void value(Uint32& v) override {
 		size_t read = fread(&v, sizeof(v), 1, fp);
 		assert(read == 1);

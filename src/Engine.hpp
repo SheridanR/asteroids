@@ -20,6 +20,7 @@
 class Game;
 class Renderer;
 class FileInterface;
+class AI;
 
 class Engine {
 public:
@@ -368,4 +369,5 @@ private:
 
 	// game state
 	Game* gamestate = nullptr;
+	AI* ai = nullptr;
 };

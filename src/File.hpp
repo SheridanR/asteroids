@@ -53,6 +53,8 @@ public:
 	virtual void propertyName(const char * name) = 0;
 
 	// @param v the value to serialize
+	virtual void value(int64_t& v) = 0;
+	// @param v the value to serialize
 	virtual void value(Uint32& v) = 0;
 	// @param v the value to serialize
 	virtual void value(Sint32& v) = 0;

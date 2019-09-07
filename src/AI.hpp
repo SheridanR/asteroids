@@ -8,6 +8,12 @@
 #include "Map.hpp"
 #include "Random.hpp"
 #include "File.hpp"
+#include "Pair.hpp"
+
+#include <memory>
+#include <atomic>
+#include <future>
+#include <vector>
 
 class Game;
 class Neuron;
@@ -16,6 +22,7 @@ class Gene;
 class Genome;
 class Species;
 class Pool;
+class AI;
 
 class Pool {
 public:
@@ -27,7 +34,7 @@ public:
 
 	void rankGlobally();
 
-	int totalAverageFitness();
+	int64_t totalAverageFitness();
 
 	void cullSpecies(bool cutToOne);
 
@@ -53,52 +60,30 @@ public:
 
 	int generation = 0;
 	int innovation;
-	int maxFitness = 0;
+	std::atomic<int64_t> maxFitness { 0 };
 	ArrayList<Species> species;
 	int inputSize = 0;
-	int boardW = 0, boardH = 0;
 	Random rand;
 
-	ArrayList<Attempt> attempts;
-};
-
-class Attempt {
-public:
-	int timeout = 0;
-	int framesSurvived = 0;
-	int shotsFired = 0;
-	int shotsHit = 0;
-	Uint32 currentFrame = 0;
-	int currentSpecies = 0; // index from 0
-	int currentGenome = 0; // index from 0
-
-	// controller outputs
-	enum Output {
-		OUT_THRUST,
-		OUT_RIGHT,
-		OUT_LEFT,
-		OUT_SHOOT,
-		OUT_MAX
-	};
-	float outputs[Output::OUT_MAX];
+	AI* ai = nullptr;
 };
 
 class AI {
 public:
-	AI(Game* _game);
+	AI();
 	~AI();
 
 	// getters
 	int getGeneration() const { return pool ? pool->generation : 0; }
-	int getMaxFitness() const { return pool ? pool->maxFitness : 0; }
-	int getSpecies(int c) const { return pool ? pool->attempts[c].currentSpecies : 0; }
-	int getGenome(int c) const { return pool ? pool->attempts[c].currentGenome : 0; }
+	int64_t getMaxFitness() const { return pool ? pool->maxFitness.load() : 0; }
+	int getMeasured() const;
 
 	// setup
-	void init(int boardW, int boardH);
+	void init();
 
 	// step the AI one frame
-	void process();
+	// @return true if a genome's fitness was still being measured, otherwise false
+	bool process();
 
 	// save AI
 	void save();
@@ -106,29 +91,19 @@ public:
 	// load AI
 	void load();
 
+	// play the best attempt
 	void playTop();
 
-	static float sigmoid(float x);
+	// advance generation
+	void nextGeneration();
 
-	ArrayList<float> getInputs();
-
-	void clearJoypad(int attempt);
-
-	void initializeRun(int attempt);
-
-	void evaluateCurrent(int attempt);
-
-	void nextGenome();
-
-	bool fitnessAlreadyMeasured(int attempt);
-
-	static const int BoxRadius;
 	static const int Outputs;
 
-	static const int Population = 300;
+	static const int Population;
 	static const float DeltaDisjoint;
 	static const float DeltaWeights;
 	static const float DeltaThreshold;
+	static const float TicksPerSecond;
 
 	static const int StaleSpecies;
 
@@ -142,12 +117,11 @@ public:
 	static const float DisableMutationChance;
 	static const float EnableMutationChance;
 
-	static const int TimeoutConstant;
-
 	static const int MaxNodes;
 
+	std::shared_ptr<Game> focus { nullptr };
+
 private:
-	Game* game = nullptr;
 	Pool* pool = nullptr;
 };
 
@@ -169,8 +143,13 @@ public:
 class Gene {
 public:
 	Gene() {}
-
-	Gene copy();
+	Gene(const Gene& src) :
+		into(src.into),
+		out(src.out),
+		weight(src.weight),
+		enabled(src.enabled),
+		innovation(src.innovation)
+	{}
 
 	// save/load this object to a file
 	// @param file interface to serialize with
@@ -206,8 +185,9 @@ public:
 class Genome {
 public:
 	Genome();
+	Genome(const Genome& src);
 
-	Genome copy();
+	Genome& operator=(const Genome& src);
 
 	void mutate();
 
@@ -227,19 +207,42 @@ public:
 
 	ArrayList<float> evaluateNetwork(ArrayList<float>& inputs);
 
+	void initializeRun();
+
+	void clearJoypad();
+
+	void evaluateCurrent();
+
+	ArrayList<float> getInputs();
+
 	// save/load this object to a file
 	// @param file interface to serialize with
 	void serialize(FileInterface * file);
 
 	ArrayList<Gene> genes;
-	int fitness = 0;
-	int adjustedFitness = 0;
+	int64_t fitness = 0;
 	Network network;
 	int maxNeuron = 0;
 	int globalRank = 0;
 	Map<String, float> mutationRates;
 
 	Pool* pool = nullptr;
+
+	int framesSurvived = 0;
+	Uint32 currentFrame = 0;
+	std::shared_ptr<Game> game { nullptr };
+	bool finished = false;
+	float totalDanger = 0.f;
+
+	// controller outputs
+	enum Output {
+		OUT_THRUST,
+		OUT_RIGHT,
+		OUT_LEFT,
+		//OUT_SHOOT,
+		OUT_MAX
+	};
+	float outputs[Output::OUT_MAX];
 
 	class AscSortPtr : public ArrayList<Genome*>::SortFunction {
 	public:
@@ -260,6 +263,9 @@ public:
 			return a.fitness > b.fitness;
 		}
 	};
+
+private:
+	static float sigmoid(float x);
 };
 
 class Species {
@@ -282,9 +288,9 @@ public:
 	// @param file interface to serialize with
 	void serialize(FileInterface * file);
 
-	int topFitness = 0;
+	int64_t topFitness = 0;
 	int staleness = 0;
-	int averageFitness = 0;
+	int64_t averageFitness = 0;
 	ArrayList<Genome> genomes;
 
 	Pool* pool = nullptr;

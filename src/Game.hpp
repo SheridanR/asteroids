@@ -9,6 +9,7 @@
 #include "Random.hpp"
 #include "Pair.hpp"
 
+class Genome;
 class Game;
 class AI;
 
@@ -66,8 +67,8 @@ public:
 	bool dead = false;
 	const Entity* lastEntityHit = nullptr;
 	Game* game = nullptr;
-	int shotsFired = 0;
-	int shotsHit = 0;
+	int shotsFired = 4;
+	int shotsHit = 1;
 };
 
 class Player : public Entity {
@@ -114,7 +115,7 @@ public:
 	virtual bool onHit(const Entity* other) override;
 
 	// point value
-	virtual const Uint32 getPoints() const { return 10; }
+	virtual const Uint32 getPoints() const { return 1; }
 };
 
 class Alien : public Entity {
@@ -143,7 +144,7 @@ public:
 	int channel = -1;
 
 	// point value
-	virtual const Uint32 getPoints() const { return 50; }
+	virtual const Uint32 getPoints() const { return 10; }
 };
 
 class Bullet : public Entity {
@@ -182,7 +183,7 @@ public:
 
 class Game {
 public:
-	Game(float _boardW, float _boardH);
+	Game(AI* _ai ,float _boardW, float _boardH);
 	~Game();
 
 	// init
@@ -249,6 +250,7 @@ public:
 	int ticksPerSecond = 0;
 	bool gameInSession = false;
 
-	int id = 0;
 	AI* ai = nullptr;
+	Genome* genome = nullptr;
+	long inputCount = 0;
 };

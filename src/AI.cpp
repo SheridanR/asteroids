@@ -5,12 +5,13 @@
 #include "Engine.hpp"
 #include "Game.hpp"
 
-const int AI::BoxRadius = 40;
-const int AI::Outputs = Attempt::Output::OUT_MAX;
+const int AI::Outputs = Genome::Output::OUT_MAX;
 
+const int AI::Population = 300;
 const float AI::DeltaDisjoint = 2.f;
 const float AI::DeltaWeights = 0.4f;
 const float AI::DeltaThreshold = 1.f;
+const float AI::TicksPerSecond = 60.f;
 
 const int AI::StaleSpecies = 15;
 
@@ -24,19 +25,7 @@ const float AI::StepSize = 0.1f;
 const float AI::DisableMutationChance = 0.4f;
 const float AI::EnableMutationChance = 0.2f;
 
-const int AI::TimeoutConstant = 20;
-
 const int AI::MaxNodes = 1000000;
-
-Gene Gene::copy() {
-	Gene gene;
-	gene.into = into;
-	gene.out = out;
-	gene.weight = weight;
-	gene.enabled = enabled;
-	gene.innovation = innovation;
-	return gene;
-}
 
 void Gene::serialize(FileInterface* file) {
 	int version = 0;
@@ -58,20 +47,41 @@ Genome::Genome() {
 	mutationRates.insert("step", AI::StepSize);
 }
 
-Genome Genome::copy() {
-	Genome genome;
-	genome.pool = pool;
-	for (int c = 0; c < genes.getSize(); ++c) {
-		genome.genes.copy(genes);
+Genome::Genome(const Genome& src) {
+	genes.copy(src.genes);
+	fitness = src.fitness;
+	network = src.network;
+	maxNeuron = src.maxNeuron;
+	globalRank = src.globalRank;
+	mutationRates.copy(src.mutationRates);
+	pool = src.pool;
+	framesSurvived = src.framesSurvived;
+	currentFrame = src.currentFrame;
+	game = src.game;
+	if (game) {
+		game->genome = this;
 	}
-	genome.maxNeuron = maxNeuron;
-	*genome.mutationRates["connections"] = *genome.mutationRates["connections"];
-	*genome.mutationRates["link"] = *genome.mutationRates["link"];
-	*genome.mutationRates["bias"] = *genome.mutationRates["bias"];
-	*genome.mutationRates["node"] = *genome.mutationRates["node"];
-	*genome.mutationRates["enable"] = *genome.mutationRates["enable"];
-	*genome.mutationRates["disable"] = *genome.mutationRates["disable"];
-	return genome;
+	finished = src.finished;
+	totalDanger = src.totalDanger;
+}
+
+Genome& Genome::operator=(const Genome& src) {
+	genes.copy(src.genes);
+	fitness = src.fitness;
+	network = src.network;
+	maxNeuron = src.maxNeuron;
+	globalRank = src.globalRank;
+	mutationRates.copy(src.mutationRates);
+	pool = src.pool;
+	framesSurvived = src.framesSurvived;
+	currentFrame = src.currentFrame;
+	game = src.game;
+	if (game) {
+		game->genome = this;
+	}
+	finished = src.finished;
+	totalDanger = src.totalDanger;
+	return *this;
 }
 
 void Genome::generateNetwork() {
@@ -101,6 +111,10 @@ void Genome::generateNetwork() {
 	}
 }
 
+float Genome::sigmoid(float x) {
+	return 2.f / (1.f + expf(-4.9f * x)) - 1.f;
+}
+
 ArrayList<float> Genome::evaluateNetwork(ArrayList<float>& inputs) {
 	if (inputs.getSize() != pool->inputSize) {
 		mainEngine->fmsg(Engine::MSG_WARN, "incorrect number of neural network inputs");
@@ -115,16 +129,18 @@ ArrayList<float> Genome::evaluateNetwork(ArrayList<float>& inputs) {
 
 	for (auto& pair : network.neurons) {
 		auto& neuron = pair.b;
-		int sum = 0;
+		float sum = 0;
 		for (int j = 0; j < neuron.incoming.getSize(); ++j) {
-			auto incoming = neuron.incoming[j];
+			auto& incoming = neuron.incoming[j];
 			auto other = network.neurons[incoming->into];
 			assert(other);
 			sum += incoming->weight * other->value;
 		}
 
 		if (neuron.incoming.getSize()) {
-			neuron.value = AI::sigmoid(sum);
+			neuron.value = sigmoid(sum);
+		} else {
+			neuron.value = 0.f;
 		}
 	}
 
@@ -251,14 +267,14 @@ void Genome::nodeMutate() {
 	}
 	gene.enabled = false;
 
-	auto gene1 = gene.copy();
+	auto gene1 = gene;
 	gene1.out = maxNeuron;
 	gene1.weight = 1.f;
 	gene1.innovation = pool->newInnovation();
 	gene1.enabled = true;
 	genes.push(gene1);
 
-	auto gene2 = gene.copy();
+	auto gene2 = gene;
 	gene2.into = maxNeuron;
 	gene2.innovation = pool->newInnovation();
 	gene2.enabled = true;
@@ -378,9 +394,9 @@ Genome Species::crossover(Genome* g1, Genome* g2) {
 		auto& gene1 = g1->genes[i];
 		auto gene2 = innovations2[gene1.innovation];
 		if (gene2 != nullptr && pool->rand.getUint8()%2 == 0 && (*gene2)->enabled) {
-			child.genes.push((*gene2)->copy());
+			child.genes.push(**gene2);
 		} else {
-			child.genes.push(gene1.copy());
+			child.genes.push(gene1);
 		}
 	}
 
@@ -441,18 +457,18 @@ float Species::weights(Genome* g1, Genome* g2) {
 		i2.insert(gene.innovation, &gene);
 	}
 
-	int sum = 0;
+	float sum = 0;
 	int coincident = 0;
 	for (int i = 0; i < g1->genes.getSize(); ++i) {
 		auto& gene = g1->genes[i];
 		if (i2[gene.innovation] != nullptr) {
 			auto& gene2 = **i2[gene.innovation];
-			sum = sum + fabs(gene.weight - gene2.weight);
+			sum += fabs(gene.weight - gene2.weight);
 			++coincident;
 		}
 	}
 
-	return (float)sum / coincident;
+	return sum / coincident;
 }
 
 bool Species::sameSpecies(Genome* g1, Genome* g2) {
@@ -465,14 +481,14 @@ bool Species::sameSpecies(Genome* g1, Genome* g2) {
 }
 
 void Species::calculateAverageFitness() {
-	int total = 0;
+	int64_t total = 0;
 
 	for (int g = 0; g < genomes.getSize(); ++g) {
 		auto& genome = genomes[g];
 		total += genome.globalRank;
 	}
 	if (genomes.getSize()) {
-		averageFitness = total / (int)genomes.getSize();
+		averageFitness = total / (int64_t)genomes.getSize();
 	} else {
 		averageFitness = 0;
 	}
@@ -488,7 +504,7 @@ Genome Species::breedChild() {
 			child = crossover(&g1, &g2);
 		} else {
 			auto& g = genomes[pool->rand.getUint32() % genomes.getSize()];
-			child = g.copy();
+			child = g;
 		}
 	} else {
 		assert(0); // what the heck!
@@ -541,8 +557,8 @@ void Pool::rankGlobally() {
 	}
 }
 
-int Pool::totalAverageFitness() {
-	int total = 0;
+int64_t Pool::totalAverageFitness() {
+	int64_t total = 0;
 	for (int s = 0; s < species.getSize(); ++s) {
 		auto& spec = species[s];
 		total += spec.averageFitness;
@@ -590,10 +606,10 @@ void Pool::removeStaleSpecies() {
 
 void Pool::removeWeakSpecies() {
 	ArrayList<Species> survived;
-	int sum = totalAverageFitness();
+	int64_t sum = totalAverageFitness();
 	for (int s = 0; s < species.getSize(); ++s) {
 		auto& spec = species[s];
-		int breed = sum ? (int)floorf(((float)spec.averageFitness / (float)sum) * (float)AI::Population) : 1;
+		int64_t breed = sum ? (int64_t)floorf(((float)spec.averageFitness / (float)sum) * (float)AI::Population) : 1;
 		if (breed >= 1) {
 			survived.push(spec);
 		}
@@ -629,11 +645,11 @@ void Pool::newGeneration() {
 		spec.calculateAverageFitness();
 	}
 	removeWeakSpecies();
-	int sum = totalAverageFitness();
+	int64_t sum = totalAverageFitness();
 	ArrayList<Genome> children;
 	for (int s = 0; s < species.getSize(); ++s) {
 		auto& spec = species[s];
-		int breed = (int)floorf(((float)spec.averageFitness / (float)sum) * (float)AI::Population);
+		int64_t breed = (int64_t)floorf(((float)spec.averageFitness / (float)sum) * (float)AI::Population);
 		for (int i = 0; i < breed; ++i) {
 			children.push(spec.breedChild());
 		}
@@ -664,9 +680,6 @@ void Pool::savePool() {
 }
 
 void Pool::loadFile(const char* filename) {
-	currentFrame = 0;
-	currentSpecies = 0;
-	currentGenome = 0;
 	generation = 0;
 	innovation = AI::Outputs;
 	maxFitness = 0;
@@ -683,7 +696,9 @@ void Pool::serialize(FileInterface* file) {
 	int version = 0;
 	file->property("version", version);
 	file->property("generation", generation);
-	file->property("maxFitness", maxFitness);
+	int64_t maxFitnessInt = maxFitness.load();
+	file->property("maxFitness", maxFitnessInt);
+	maxFitness.store(maxFitnessInt);
 	file->property("species", species);
 	if (file->isReading()) {
 		for (auto& spec : species) {
@@ -695,8 +710,7 @@ void Pool::serialize(FileInterface* file) {
 	}
 }
 
-AI::AI(Game* _game) {
-	game = _game;
+AI::AI() {
 }
 
 AI::~AI() {
@@ -706,186 +720,215 @@ AI::~AI() {
 	}
 }
 
-void AI::init(int boardW, int boardH) {
+void AI::init() {
 	if (pool) {
 		delete pool;
 		pool = nullptr;
 	}
 	pool = new Pool();
+	pool->ai = this;
 	pool->rand.seedTime();
-	pool->boardW = boardW / BoxRadius;
-	pool->boardH = boardH / BoxRadius;
-	//pool->inputSize = pool->boardW * pool->boardH;
-	pool->inputSize = 40;
+	pool->inputSize = 16;
 	pool->init();
 	pool->writeFile("temp.json");
-	initializeRun();
 }
 
-float AI::sigmoid(float x) {
-	return 2.f / (1.f + expf(-4.9f * x)) - 1.f;
-}
+static const float aiClipNear = 10.f;
+static const float aiClipFar = 500.f;
 
-ArrayList<float> AI::getInputs() {
-	assert(game);
-
+ArrayList<float> Genome::getInputs() {
 	ArrayList<float> inputs;
 	inputs.resize(pool->inputSize);
+	assert(game.get());
 
 	if (game->player) {
 		float angle = 0.f;
-		float finc = ((PI * 2.f) / pool->inputSize) * 2.f;
-		for (int c = 0; c < pool->inputSize; c += 2) {
+		float finc = (PI * 2.f) / 16.f;
+		for (int c = 0; c < 16; ++c) {
 			auto& pos = game->player->pos;
 			auto& ang = game->player->ang;
 			auto result = game->player->rayTrace(pos, ang + angle);
 			if (result.a) {
-				inputs[c] = 1.f / result.b;
-				inputs[c + 1] = result.a->vel.normal().dot(game->player->vel.normal());
+				//inputs[c * 2] = std::min(std::max((result.b - aiClipNear) / aiClipFar, 0.f), 1.f);
+				//inputs[c * 2] = 1.f / result.b;
+				inputs[c] = 1.f - std::min(std::max((result.b - aiClipNear) / aiClipFar, 0.f), 1.f);
+				//Vector towardsPlayer(cos(ang + angle + PI), sin(ang + angle + PI), 0.f);
+				//float redShift = result.a->vel.normal().dot(towardsPlayer);
+				//inputs[c * 2 + 1] = redShift;
 			} else {
 				inputs[c] = 0.f;
-				inputs[c + 1] = 0.f;
+				//inputs[c * 2] = 1.f;
+				//inputs[c * 2 + 1] = 0.f;
 			}
 			angle += finc;
 		}
+		/*if (inputs[0] != 0.f && !game->player->shooting) {
+			inputs[32] = 1.f;
+		} else {
+			inputs[32] = 0.f;
+		}*/
+		//inputs[32] = game->player->vel.x / 10.f;
+		//inputs[33] = game->player->vel.y / 10.f;
 	}
 
 	return inputs;
 }
 
-void AI::clearJoypad(int attempt) {
-	auto& a = pool->attempts[attempt];
-	for (int c = 0; c < (int)Attempt::Output::OUT_MAX; ++c) {
-		a.outputs[c] = false;
+void Genome::clearJoypad() {
+	for (int c = 0; c < (int)Genome::Output::OUT_MAX; ++c) {
+		outputs[c] = 0.f;
 	}
 }
 
-void AI::initializeRun(int attempt) {
-	game->term();
+void Genome::initializeRun() {
+	game = std::make_shared<Game>(pool->ai, mainEngine->getXres(), mainEngine->getYres());
+	game->genome = this;
 	game->init();
-	auto& a = pool->attempts[attempt];
-	a.framesSurvived = 0;
-	a.shotsFired = 0;
-	a.shotsHit = 0;
-	a.timeout = TimeoutConstant;
-	a.currentFrame = 0;
-	clearJoypad(attempt);
-	auto& spec = pool->species[a.currentSpecies];
-	auto& genome = spec.genomes[a.currentGenome];
-	genome.generateNetwork();
-	evaluateCurrent(attempt);
+	framesSurvived = 0;
+	currentFrame = 0;
+	finished = false;
+	clearJoypad();
+	generateNetwork();
 }
 
-void AI::evaluateCurrent(int attempt) {
-	auto& a = pool->attempts[attempt];
-	auto& spec = pool->species[a.currentSpecies];
-	auto& genome = spec.genomes[a.currentGenome];
-
+void Genome::evaluateCurrent() {
+	if (finished) {
+		clearJoypad();
+		return;
+	}
 	auto inputs = getInputs();
-	auto controller = genome.evaluateNetwork(inputs);
+	auto controller = evaluateNetwork(inputs);
 
 	if (controller.getSize()) {
-		if (controller[Attempt::Output::OUT_LEFT] && controller[Attempt::Output::OUT_RIGHT]) {
-			controller[Attempt::Output::OUT_LEFT] = false;
-			controller[Attempt::Output::OUT_RIGHT] = false;
+		if (controller[Genome::Output::OUT_LEFT] && controller[Genome::Output::OUT_RIGHT]) {
+			controller[Genome::Output::OUT_LEFT] = false;
+			controller[Genome::Output::OUT_RIGHT] = false;
 		}
-		for (int c = 0; c < (int)Attempt::Output::OUT_MAX; ++c) {
-			a.outputs[c] = controller[c];
+		for (int c = 0; c < (int)Genome::Output::OUT_MAX; ++c) {
+			outputs[c] = controller[c];
 		}
 	} else {
-		for (int c = 0; c < (int)Attempt::Output::OUT_MAX; ++c) {
-			a.outputs[c] = false;
-		}
-	}
-}
-
-void AI::nextGenome() {
-	pool->attempts.push(Attempt());
-	if (pool->attempts.getSize() > 1) {
-		auto& newAttempt = pool->attempts[pool->attempts.getSize() - 1];
-		auto& oldAttempt = pool->attempts[pool->attempts.getSize() - 2];
-		newAttempt.currentSpecies = oldAttempt.currentSpecies;
-		newAttempt.currentGenome = oldAttempt.currentGenome + 1;
-		if (newAttempt.currentGenome >= pool->species[newAttempt.currentSpecies].genomes.getSize()) {
-			newAttempt.currentGenome = 0;
-			++newAttempt.currentSpecies;
-			if (newAttempt.currentSpecies >= pool->species.getSize()) {
-				assert(0);
-				//pool->newGeneration();
-				//pool->currentSpecies = 0;
-			}
-		}
-	}
-}
-
-bool AI::fitnessAlreadyMeasured(int attempt) {
-	auto& spec = pool->species[pool->attempts[attempt].currentSpecies];
-	auto& genome = spec.genomes[pool->attempts[attempt].currentGenome];
-	return genome.fitness != 0;
-}
-
-void AI::playTop() {
-	int maxFitness = 0;
-	int maxs = 0, maxg = 0;
-	for (int s = 0; s < pool->species.getSize(); ++s) {
-		auto& spec = pool->species[s];
-		for (int g = 0; g < spec.genomes.getSize(); ++g) {
-			auto& genome = spec.genomes[g];
-			if (genome.fitness > maxFitness) {
-				maxFitness = genome.fitness;
-				maxs = s;
-				maxg = g;
-			}
+		for (int c = 0; c < (int)Genome::Output::OUT_MAX; ++c) {
+			outputs[c] = 0.f;
 		}
 	}
 
-	pool->attempts.clear();
-	pool->attempts.push(Attempt());
-
-	/*pool->currentSpecies = maxs;
-	pool->currentGenome = maxg;
-	pool->maxFitness = maxFitness;
-	initializeRun();
-	++pool->currentFrame;*/
-}
-
-void AI::process() {
-	Species& species = pool->species[pool->currentSpecies];
-	Genome& genome = species.genomes[pool->currentGenome];
-	evaluateCurrent();
+	game->process();
 
 	if (game->player) {
-		shotsFired = game->player->shotsFired;
-		shotsHit = game->player->shotsHit;
+		int shotsFired = game->player->shotsFired;
+		int shotsHit = game->player->shotsHit;
 		framesSurvived = std::max(framesSurvived, (int)game->player->ticks);
-		if (game->player->moved) {
-			timeout = TimeoutConstant;
-		}
-	}
 
-	--timeout;
-	int timeoutBonus = pool->currentFrame / 4;
-	if (timeout + timeoutBonus <= 0 || game->lives <= 2) {
-		int fitness = game->score + 1;
+		float greatestDanger = 0.f;
+		for (int c = 0; c < 16; ++c) {
+			greatestDanger = std::max(greatestDanger, inputs[c]);
+		}
+		totalDanger += 1.f - greatestDanger;
+
+		fitness = game->score + 1;
+		//fitness *= avgDistance / (framesSurvived + 1);
 		fitness *= std::max(1.f, (float)framesSurvived);
-		fitness *= std::max((float)shotsHit, 1.f) / std::max((float)shotsFired, 1.f);
+		float dangerRate = totalDanger / framesSurvived;
+		fitness *= dangerRate * dangerRate;
+		//float hitRate = std::max((float)shotsHit, 1.f) / std::max((float)shotsFired, 1.f);
+		//fitness *= hitRate * hitRate;
 		if (fitness == 0) {
 			fitness = -1;
 		}
-		genome.fitness = fitness;
+	}
 
+	if (game->lives <= 2) {
 		if (fitness > pool->maxFitness) {
 			pool->maxFitness = fitness;
 		}
 
-		pool->currentSpecies = 0;
-		pool->currentGenome = 0;
-		while (fitnessAlreadyMeasured()) {
-			nextGenome();
-		}
-		initializeRun();
+		finished = true;
+		game->term();
 	}
-	++pool->currentFrame;
+	++currentFrame;
+}
+
+void AI::playTop() {
+	int64_t maxFitness = 0;
+	int maxs = 0, maxg = 0;
+	focus = nullptr;
+	for (int s = 0; s < pool->species.getSize(); ++s) {
+		auto& spec = pool->species[s];
+		for (int g = 0; g < spec.genomes.getSize(); ++g) {
+			auto& genome = spec.genomes[g];
+			if (!focus || (genome.game && genome.fitness > maxFitness)) {
+				maxFitness = genome.fitness;
+				focus = genome.game;
+			}
+		}
+	}
+}
+
+int AI::getMeasured() const {
+	int count = 0, done = 0;
+	for (int s = 0; s < pool->species.getSize(); ++s) {
+		auto& spec = pool->species[s];
+		for (int g = 0; g < spec.genomes.getSize(); ++g) {
+			auto& genome = spec.genomes[g];
+			if (genome.finished) {
+				++done;
+			}
+			++count;
+		}
+	}
+	return (int)((float)done / (float)count * 100.f);
+}
+
+bool AI::process() {
+	int threads = 0;
+	bool result = true;
+
+	if (mainEngine->pressKey(SDL_SCANCODE_F1)) {
+		save();
+	}
+	if (mainEngine->pressKey(SDL_SCANCODE_F2)) {
+		load();
+	}
+
+	std::vector<std::future<void>> tasks;
+
+	int64_t maxFitness = 0;
+
+	for (auto& spec : pool->species) {
+		for (auto& gen : spec.genomes) {
+			if (gen.game == nullptr) {
+				gen.initializeRun();
+			}
+			if (threads < 150) {
+				if (gen.finished) {
+					if (gen.game == focus) {
+						focus = nullptr;
+					}
+				} else {
+					result = false;
+					tasks.push_back(std::async(std::launch::async, &Genome::evaluateCurrent, &gen));
+					++threads;
+				}
+			} else {
+				if (!gen.finished) {
+					result = false;
+				}
+			}
+			if (!gen.finished) {
+				if (!focus || !focus->gameInSession || (gen.game && gen.fitness > maxFitness)) {
+					maxFitness = gen.fitness;
+					focus = gen.game;
+				}
+			}
+		}
+	}
+
+	for (auto& task : tasks) {
+		task.wait();
+	}
+
+	return result;
 }
 
 void AI::save() {
@@ -894,9 +937,9 @@ void AI::save() {
 
 void AI::load() {
 	pool->loadPool();
-	while (fitnessAlreadyMeasured()) {
-		nextGenome();
-	}
-	initializeRun();
-	++pool->currentFrame;
+}
+
+void AI::nextGeneration() {
+	pool->rand.seedTime();
+	pool->newGeneration();
 }
